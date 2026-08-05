@@ -8,6 +8,7 @@ local MAX_INPUT_LEN = 100000
 local MAX_DECOMPRESSED_LEN = 200000
 local MAX_TALENTS = 200
 local MAX_SPELLS = 500
+local MAX_NOTES_LEN = 10000
 
 local function TrimString(s)
 	return s:match("^%s*(.-)%s*$")
@@ -88,6 +89,9 @@ function BB.BuildExport.Import(str)
 	end
 	if type(bd.knownSpells) == "table" and #bd.knownSpells > MAX_SPELLS then
 		return false, nil, nil, "this build has an implausible number of spells"
+	end
+	if type(bd.notes) == "string" and #bd.notes > MAX_NOTES_LEN then
+		bd.notes = bd.notes:sub(1, MAX_NOTES_LEN)
 	end
 
 	local name = BB.StripFormatting(package.bn)

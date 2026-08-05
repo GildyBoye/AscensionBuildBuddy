@@ -505,6 +505,21 @@ function BB.Capture.CaptureTalents()
 	return talents
 end
 
+function BB.Capture.GetTotalEssenceSpent()
+	local ae, te = 0, 0
+	if type(C_CharacterAdvancement) == "table" then
+		if C_CharacterAdvancement.GetGlobalAEInvestment then
+			local ok, v = pcall(C_CharacterAdvancement.GetGlobalAEInvestment)
+			if ok and type(v) == "number" then ae = v end
+		end
+		if C_CharacterAdvancement.GetGlobalTEInvestment then
+			local ok, v = pcall(C_CharacterAdvancement.GetGlobalTEInvestment)
+			if ok and type(v) == "number" then te = v end
+		end
+	end
+	return ae, te
+end
+
 function BB.Capture.CaptureCurrent()
 	local build = {
 		version = 1,
@@ -528,6 +543,7 @@ function BB.Capture.CaptureCurrent()
 
 	build.talents = BB.Capture.CaptureTalents()
 	build.cards = BB.Capture.GetSocketedCards(true)
+	build.totalAE, build.totalTE = BB.Capture.GetTotalEssenceSpent()
 
 	return build
 end

@@ -1,6 +1,6 @@
 # Ascension Build Buddy
 
-WoW 3.3.5a addon for the [Ascension](https://ascension.gg) server. Mirrors your Character Advancement build — gear, stats, spells, talents and skill cards — and lets you save, view, and share it like an armory.
+WoW 3.3.5a addon for the [Ascension](https://ascension.gg) server. Mirrors your Character Advancement build (gear, stats, spells, talents, skill cards) and lets you save, view, and share it like an armory.
 
 ## Features
 

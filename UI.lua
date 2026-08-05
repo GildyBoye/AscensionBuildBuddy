@@ -161,6 +161,7 @@ local githubDialog
 local function OpenGithubDialog()
 	if not githubDialog then
 		githubDialog = BuildLinkDialog("AscensionBuildBuddyGithubDialog", "AscensionBuildBuddy on GitHub", "Ctrl+A then Ctrl+C to copy the whole link:", GITHUB_URL)
+		MakeModalOverMain(githubDialog)
 	end
 	OpenLinkDialog(githubDialog)
 end
@@ -169,6 +170,7 @@ local discordDialog
 local function OpenDiscordDialog()
 	if not discordDialog then
 		discordDialog = BuildLinkDialog("AscensionBuildBuddyDiscordDialog", "Join the Discord", "Ctrl+A then Ctrl+C to copy the whole link:", DISCORD_URL)
+		MakeModalOverMain(discordDialog)
 	end
 	OpenLinkDialog(discordDialog)
 end
@@ -211,7 +213,8 @@ end
 
 local function GetActiveSpellsData()
 	if viewingLive then
-		return { talents = BB.Capture.CaptureTalents(), knownSpells = BB.Capture.GetKnownSpells() }
+		local totalAE, totalTE = BB.Capture.GetTotalEssenceSpent()
+		return { talents = BB.Capture.CaptureTalents(), knownSpells = BB.Capture.GetKnownSpells(), totalAE = totalAE, totalTE = totalTE }
 	end
 	return viewedBuild or BB.Capture.CaptureCurrent()
 end
@@ -563,6 +566,7 @@ end
 local spellsTab
 local spellScrollFrame
 local spellScrollChild
+local costSummaryText
 local talentButtons = {}
 local spellButtons = {}
 local talentsLabel, spellsLabel, passivesLabel, divider, divider2
@@ -580,8 +584,13 @@ local function BuildSpellsTab(parent)
 	f:SetAllPoints(parent)
 	f:Hide()
 
+	costSummaryText = f:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+	costSummaryText:SetPoint("TOPLEFT", f, "TOPLEFT", 6, -SCROLL_TOP_INSET)
+	costSummaryText:SetJustifyH("LEFT")
+	costSummaryText:SetTextColor(0.6, 0.8, 1)
+
 	spellScrollFrame = CreateFrame("ScrollFrame", "AscensionBuildBuddySpellScroll", f, "UIPanelScrollFrameTemplate")
-	spellScrollFrame:SetPoint("TOPLEFT", f, "TOPLEFT", 6, -SCROLL_TOP_INSET)
+	spellScrollFrame:SetPoint("TOPLEFT", costSummaryText, "BOTTOMLEFT", 0, -6)
 	spellScrollFrame:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -SCROLL_RIGHT_INSET, SCROLL_BOTTOM_INSET)
 
 	local scrollChild = CreateFrame("Frame", nil, spellScrollFrame)
@@ -699,6 +708,8 @@ function BB.UI.RefreshSpellsTab()
 	local talentsAll = {}
 	for i, entry in ipairs(build.talents or {}) do talentsAll[i] = entry end
 	SortTalentsByCost(talentsAll)
+
+	costSummaryText:SetText(("Ability Essence: %d  |  Talent Essence: %d"):format(build.totalAE or 0, build.totalTE or 0))
 
 	local realTalents, abilityEntries = {}, {}
 	for _, entry in ipairs(talentsAll) do
@@ -1031,6 +1042,69 @@ function BB.UI.RefreshCardsTab()
 	UpdateScrollBarVisibility(cardsScrollFrame)
 end
 
+local notesTab
+local notesScrollFrame
+local notesEditBox
+local notesHintText
+local notesSaveBtn
+local liveNoteDraft = ""
+
+local function BuildNotesTab(parent)
+	local f = CreateFrame("Frame", nil, parent)
+	f:SetAllPoints(parent)
+	f:Hide()
+
+	notesHintText = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+	notesHintText:SetPoint("TOPLEFT", f, "TOPLEFT", 6, -6)
+	notesHintText:SetWidth(500)
+	notesHintText:SetJustifyH("LEFT")
+
+	notesScrollFrame = CreateFrame("ScrollFrame", "AscensionBuildBuddyNotesScroll", f, "UIPanelScrollFrameTemplate")
+	notesScrollFrame:SetPoint("TOPLEFT", notesHintText, "BOTTOMLEFT", 0, -6)
+	notesScrollFrame:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -SCROLL_RIGHT_INSET, SCROLL_BOTTOM_INSET + 30)
+
+	local editBox = CreateFrame("EditBox", nil, notesScrollFrame)
+	editBox:SetMultiLine(true)
+	editBox:SetFontObject(ChatFontNormal)
+	editBox:SetWidth(460)
+	editBox:SetHeight(600)
+	editBox:SetAutoFocus(false)
+	editBox:SetMaxLetters(10000)
+	editBox:SetScript("OnTextChanged", function(self)
+		if viewingLive then
+			liveNoteDraft = self:GetText()
+		end
+	end)
+	notesScrollFrame:SetScrollChild(editBox)
+	notesEditBox = editBox
+
+	local saveBtn = CreateActionButton(f, "Save Note", 100)
+	saveBtn:SetPoint("BOTTOMLEFT", f, "BOTTOMLEFT", 6, 0)
+	saveBtn:SetScript("OnClick", function()
+		if viewingLive or not currentBuildName then return end
+		StaticPopup_Show("ASCENSIONBUILDBUDDY_CONFIRM_NOTE_EDIT", currentBuildName)
+	end)
+	AddTooltip(saveBtn, "Save Note", "Save this note for the selected build.")
+	notesSaveBtn = saveBtn
+
+	notesTab = f
+	return f
+end
+
+function BB.UI.RefreshNotesTab()
+	if not notesTab then return end
+	if viewingLive then
+		notesHintText:SetText("Note for Live Character - click the box below to type. Included automatically the next time you Save, New, Export, or Share.")
+		notesEditBox:SetText(liveNoteDraft)
+		notesSaveBtn:Hide()
+	else
+		local build = currentBuildName and BB.GetBuilds()[currentBuildName]
+		notesHintText:SetText(("Note for \"%s\" - click the box below to type:"):format(currentBuildName or "?"))
+		notesEditBox:SetText((build and build.notes) or "")
+		notesSaveBtn:Show()
+	end
+end
+
 local SIDEBAR_W = 170
 local BUILD_ROW_HEIGHT = 20
 
@@ -1144,7 +1218,11 @@ function BB.UI.RefreshBuildList()
 			row.selectedBorder:Hide()
 		end
 		local build = BB.GetBuilds()[name]
-		AddTooltip(row, name, "by " .. ((build and build.author) or "?") .. " - click to view this build.")
+		local subtext = "by " .. ((build and build.author) or "?") .. " - click to view this build."
+		if build and build.notes and build.notes ~= "" then
+			subtext = subtext .. "\n\n" .. build.notes
+		end
+		AddTooltip(row, name, subtext)
 		row:Show()
 	end
 
@@ -1173,6 +1251,7 @@ local function SetActiveTab(tabName)
 	if tabName == "character" then BB.UI.RefreshCharacterTab() end
 	if tabName == "spells" then BB.UI.RefreshSpellsTab() end
 	if tabName == "cards" then BB.UI.RefreshCardsTab() end
+	if tabName == "notes" then BB.UI.RefreshNotesTab() end
 end
 
 function BB.UI.ShowLiveBuild()
@@ -1203,6 +1282,12 @@ end
 
 local function DoSaveNewBuild(name)
 	local snapshot = BB.Capture.CaptureCurrent()
+	local existing = BB.GetBuilds()[name]
+	if viewingLive and liveNoteDraft ~= "" then
+		snapshot.notes = liveNoteDraft
+	elseif existing then
+		snapshot.notes = existing.notes
+	end
 	local ok, err = BB.SaveBuild(name, snapshot)
 	if not ok then
 		BB.Print(err)
@@ -1312,15 +1397,7 @@ StaticPopupDialogs["ASCENSIONBUILDBUDDY_CONFIRM_SAVE"] = {
 	button2 = CANCEL,
 	OnAccept = function()
 		if viewingLive or not currentBuildName then return end
-		local name = currentBuildName
-		local snapshot = BB.Capture.CaptureCurrent()
-		local ok, err = BB.SaveBuild(name, snapshot)
-		if not ok then
-			BB.Print(err)
-			return
-		end
-		BB.Print("Saved build '" .. name .. "'.")
-		BB.UI.ShowSavedBuild(name)
+		DoSaveNewBuild(currentBuildName)
 	end,
 	timeout = 0,
 	whileDead = true,
@@ -1343,6 +1420,25 @@ StaticPopupDialogs["ASCENSIONBUILDBUDDY_RENAME_BUILD"] = {
 		self:GetParent():Hide()
 	end,
 	EditBoxOnEscapePressed = function(self) self:GetParent():Hide() end,
+	timeout = 0,
+	whileDead = true,
+	hideOnEscape = true,
+}
+
+StaticPopupDialogs["ASCENSIONBUILDBUDDY_CONFIRM_NOTE_EDIT"] = {
+	text = "Update the note for \"%s\"? This changes it for anyone who already has this build shared.",
+	button1 = "Save Note",
+	button2 = CANCEL,
+	OnAccept = function()
+		if viewingLive or not currentBuildName then return end
+		local build = BB.GetBuilds()[currentBuildName]
+		if build then
+			local text = notesEditBox:GetText()
+			build.notes = (text ~= "") and text or nil
+			BB.Print("Updated note for '" .. currentBuildName .. "'.")
+			BB.UI.RefreshBuildList()
+		end
+	end,
 	timeout = 0,
 	whileDead = true,
 	hideOnEscape = true,
@@ -1375,6 +1471,7 @@ end
 function BB.UI.ExportCurrent()
 	local name = viewingLive and "Live Character" or currentBuildName
 	local buildData = GetActiveBuild()
+	if viewingLive and liveNoteDraft ~= "" then buildData.notes = liveNoteDraft end
 	local str, err = BB.BuildExport.Export(name, buildData)
 	if not str then
 		BB.Print("Export failed: " .. tostring(err))
@@ -1518,6 +1615,7 @@ function BB.UI.ShareCurrentBuild(channel, target)
 	end
 	local name = viewingLive and "Live Character" or currentBuildName
 	local buildData = GetActiveBuild()
+	if viewingLive and liveNoteDraft ~= "" then buildData.notes = liveNoteDraft end
 	BB.BuildChat.PostBuild(channel, name, buildData, target)
 end
 
@@ -1662,14 +1760,14 @@ local function BuildMainFrame()
 	denyCheck:SetScript("OnClick", function(self)
 		BB.db.denyShares = self:GetChecked() and true or false
 	end)
-	AddTooltip(denyCheck, "Deny Incoming Shares", "While this is on, any build shared with you - party/guild broadcasts or direct whispers - is automatically declined without showing a popup. Toggle off to receive share prompts again.")
+	AddTooltip(denyCheck, "Deny Incoming Shares", "Automatically declines any build shared with you, without showing a popup.")
 
 	local denyLabel = f:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
 	denyLabel:SetPoint("LEFT", denyCheck, "RIGHT", 2, 0)
 	denyLabel:SetText("Deny Shares")
 
 	local sidebarArea = CreateFrame("Frame", nil, f)
-	sidebarArea:SetPoint("TOPLEFT", f, "TOPLEFT", 14, -54)
+	sidebarArea:SetPoint("TOPLEFT", f, "TOPLEFT", 14, -80)
 	sidebarArea:SetPoint("BOTTOMLEFT", f, "BOTTOMLEFT", 14, 12)
 	sidebarArea:SetWidth(SIDEBAR_W)
 	BuildBuildsSidebar(sidebarArea)
@@ -1680,29 +1778,34 @@ local function BuildMainFrame()
 	contentArea:SetPoint("TOPLEFT", f, "TOPLEFT", CONTENT_X, -80)
 	contentArea:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -12, 12)
 
-	local tabLabels = { character = "Character", spells = "Spells & Talents", cards = "Cards" }
-	local tabWidths = { character = 130, spells = 130, cards = 80 }
+	local tabOrder = { "character", "spells", "cards", "notes" }
+	local tabLabels = { character = "Character", spells = "Spells & Talents", cards = "Cards", notes = "Notes" }
+	local tabWidths = { character = 130, spells = 130, cards = 80, notes = 80 }
 
-	local function MakeTabButton(tabName)
+	local tabRowWidth = 0
+	for _, tabName in ipairs(tabOrder) do
+		tabRowWidth = tabRowWidth + tabWidths[tabName]
+	end
+	tabRowWidth = tabRowWidth + 6 * (#tabOrder - 1)
+
+	local prevTab
+	for _, tabName in ipairs(tabOrder) do
 		local btn = CreateActionButton(f, tabLabels[tabName], tabWidths[tabName])
 		btn.selectedBorder = CreateSelectionBorder(btn, 3)
 		btn:SetScript("OnClick", function() SetActiveTab(tabName) end)
 		tabButtons[tabName] = btn
-		return btn
+		if prevTab then
+			btn:SetPoint("LEFT", prevTab, "RIGHT", 6, 0)
+		else
+			btn:SetPoint("TOPLEFT", f, "TOPLEFT", (740 - tabRowWidth) / 2, -52)
+		end
+		prevTab = btn
 	end
-
-	local middleBtn = MakeTabButton("spells")
-	middleBtn:SetPoint("TOP", f, "TOP", 0, -52)
-
-	local leftBtn = MakeTabButton("character")
-	leftBtn:SetPoint("RIGHT", middleBtn, "LEFT", -6, 0)
-
-	local rightBtn = MakeTabButton("cards")
-	rightBtn:SetPoint("LEFT", middleBtn, "RIGHT", 6, 0)
 
 	tabFrames.character = BuildCharacterTab(contentArea)
 	tabFrames.spells = BuildSpellsTab(contentArea)
 	tabFrames.cards = BuildCardsTab(contentArea)
+	tabFrames.notes = BuildNotesTab(contentArea)
 
 	local creditText = f:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
 	creditText:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -30, 14)
