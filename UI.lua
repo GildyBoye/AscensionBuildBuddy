@@ -11,7 +11,8 @@ local TOOLTIP_DELAY = 0.5
 
 local SLOT_LABELS = {
 	HeadSlot = "Head", NeckSlot = "Neck", ShoulderSlot = "Shoulder", BackSlot = "Back",
-	ChestSlot = "Chest", WristSlot = "Wrist", HandsSlot = "Hands", WaistSlot = "Waist",
+	ChestSlot = "Chest", ShirtSlot = "Shirt", TabardSlot = "Tabard", WristSlot = "Wrist",
+	HandsSlot = "Hands", WaistSlot = "Waist",
 	LegsSlot = "Legs", FeetSlot = "Feet", Finger0Slot = "Ring 1", Finger1Slot = "Ring 2",
 	Trinket0Slot = "Trinket 1", Trinket1Slot = "Trinket 2", MainHandSlot = "Main Hand",
 	SecondaryHandSlot = "Off Hand", RangedSlot = "Ranged",
@@ -55,6 +56,8 @@ local function CreateBorderedFrame(name, parent, width, height, title)
 		edgeSize = 32,
 		insets = { left = 11, right = 12, top = 12, bottom = 11 },
 	})
+	f:SetBackdropColor(0, 0, 0, 0.85)
+
 	f:EnableMouse(true)
 	f:SetMovable(true)
 	f:RegisterForDrag("LeftButton")
@@ -137,6 +140,39 @@ local function BuildTextDialog(name, title)
 	return f
 end
 
+local GITHUB_URL = "https://github.com/GildyBoye/AscensionBuildBuddy"
+local DISCORD_URL = "https://discord.com/invite/mQjgHCW"
+
+local function BuildLinkDialog(name, title, hint, url)
+	local f = BuildTextDialog(name, title)
+	f.hint:SetText(hint)
+	f.linkURL = url
+	return f
+end
+
+local function OpenLinkDialog(dialog)
+	dialog.editBox:SetText(dialog.linkURL)
+	dialog:Show()
+	dialog.editBox:HighlightText()
+	dialog.editBox:SetFocus()
+end
+
+local githubDialog
+local function OpenGithubDialog()
+	if not githubDialog then
+		githubDialog = BuildLinkDialog("AscensionBuildBuddyGithubDialog", "AscensionBuildBuddy on GitHub", "Ctrl+A then Ctrl+C to copy the whole link:", GITHUB_URL)
+	end
+	OpenLinkDialog(githubDialog)
+end
+
+local discordDialog
+local function OpenDiscordDialog()
+	if not discordDialog then
+		discordDialog = BuildLinkDialog("AscensionBuildBuddyDiscordDialog", "Join the Discord", "Ctrl+A then Ctrl+C to copy the whole link:", DISCORD_URL)
+	end
+	OpenLinkDialog(discordDialog)
+end
+
 local SCROLL_TOP_INSET = 6
 local SCROLL_BOTTOM_INSET = 6
 local SCROLL_RIGHT_INSET = 28
@@ -166,6 +202,27 @@ local function GetActiveBuild()
 	return viewedBuild or BB.Capture.CaptureCurrent()
 end
 
+local function GetActiveCharacterData()
+	if viewingLive then
+		return BB.Capture.CaptureCharacterSnapshot()
+	end
+	return viewedBuild or BB.Capture.CaptureCurrent()
+end
+
+local function GetActiveSpellsData()
+	if viewingLive then
+		return { talents = BB.Capture.CaptureTalents(), knownSpells = BB.Capture.GetKnownSpells() }
+	end
+	return viewedBuild or BB.Capture.CaptureCurrent()
+end
+
+local function GetActiveCardsData()
+	if viewingLive then
+		return { cards = BB.Capture.GetSocketedCards() }
+	end
+	return viewedBuild or BB.Capture.CaptureCurrent()
+end
+
 local characterTab
 local playerModel
 local gearButtons = {}
@@ -184,6 +241,10 @@ local SECTION_LABELS = {
 local sectionExpanded = { basic = true, melee = true, ranged = false, spell = false, defense = false }
 
 local WEAPON_SLOT_KIND = { MainHandSlot = "melee", SecondaryHandSlot = "melee", RangedSlot = "ranged" }
+local TRYON_SLOT_ID = {
+	MainHandSlot = select(1, GetInventorySlotInfo("MainHandSlot")),
+	SecondaryHandSlot = select(1, GetInventorySlotInfo("SecondaryHandSlot")),
+}
 local weaponMode = "melee"
 local modelFacing = 0
 
@@ -242,6 +303,12 @@ local MODEL_CENTER_X = MODEL_LEFT_X + MODEL_W / 2
 local GEAR_COL_RIGHT_X = MODEL_LEFT_X + MODEL_W + 10
 local STATS_LEFT_X = GEAR_COL_RIGHT_X + 36 + 14
 
+local GEAR_SLOT_SIZE = 36
+local GEAR_ROW_PITCH = GEAR_SLOT_SIZE + 6
+local GEAR_COL_TOP_Y = -10
+local GEAR_COL_ROWS = math.max(#BB.Capture.LEFT_SLOTS, #BB.Capture.RIGHT_SLOTS)
+local GEAR_COLS_BOTTOM_Y = GEAR_COL_TOP_Y - (GEAR_COL_ROWS - 1) * GEAR_ROW_PITCH - GEAR_SLOT_SIZE
+
 local function BuildCharacterTab(parent)
 	local f = CreateFrame("Frame", nil, parent)
 	f:SetAllPoints(parent)
@@ -283,13 +350,13 @@ local function BuildCharacterTab(parent)
 		if prevBottom then
 			btn:SetPoint("LEFT", prevBottom, "RIGHT", 6, 0)
 		else
-			btn:SetPoint("TOPLEFT", f, "TOPLEFT", MODEL_CENTER_X - weaponRowW / 2, -(MODEL_TOP_OFFSET + MODEL_H + 8))
+			btn:SetPoint("TOPLEFT", f, "TOPLEFT", MODEL_CENTER_X - weaponRowW / 2, GEAR_COLS_BOTTOM_Y)
 		end
 		gearButtons[slotName] = btn
 		prevBottom = btn
 	end
 
-	local controlsY = -(MODEL_TOP_OFFSET + MODEL_H + 8 + 36 + 8)
+	local controlsY = GEAR_COLS_BOTTOM_Y - GEAR_SLOT_SIZE - 8
 
 	local rotateLeftBtn = CreateActionButton(f, "<", 24)
 	rotateLeftBtn:SetPoint("TOPLEFT", f, "TOPLEFT", MODEL_CENTER_X - 73, controlsY)
@@ -421,7 +488,7 @@ end
 
 function BB.UI.RefreshCharacterTab()
 	if not characterTab then return end
-	local build = GetActiveBuild()
+	local build = GetActiveCharacterData()
 
 	local gear = build.gear or {}
 	for slotName, btn in pairs(gearButtons) do
@@ -442,7 +509,12 @@ function BB.UI.RefreshCharacterTab()
 		for slotName, entry in pairs(gear) do
 			local weaponKind = WEAPON_SLOT_KIND[slotName]
 			if (not weaponKind or weaponKind == weaponMode) and entry.link then
-				playerModel:TryOn(entry.link)
+				local slotId = TRYON_SLOT_ID[slotName]
+				if slotId then
+					pcall(playerModel.TryOn, playerModel, entry.link, slotId)
+				else
+					playerModel:TryOn(entry.link)
+				end
 			end
 		end
 		playerModel:SetFacing(modelFacing)
@@ -622,7 +694,7 @@ end
 
 function BB.UI.RefreshSpellsTab()
 	if not spellScrollChild then return end
-	local build = GetActiveBuild()
+	local build = GetActiveSpellsData()
 
 	local talentsAll = {}
 	for i, entry in ipairs(build.talents or {}) do talentsAll[i] = entry end
@@ -917,7 +989,7 @@ end
 
 function BB.UI.RefreshCardsTab()
 	if not cardsScrollChild then return end
-	local build = GetActiveBuild()
+	local build = GetActiveCardsData()
 	local cards = build and build.cards or { ability = { golden = {}, normal = {} }, talent = { golden = {}, normal = {} } }
 
 	local hasAny = (#cards.ability.golden > 0) or (#cards.ability.normal > 0)
@@ -1129,12 +1201,7 @@ function BB.UI.PromptNewBuild()
 	StaticPopup_Show("ASCENSIONBUILDBUDDY_NEW_BUILD")
 end
 
-function BB.UI.CreateNewBuild(name)
-	name = BB.StripFormatting((name or ""):match("^%s*(.-)%s*$"))
-	if name == "" then
-		BB.Print("Build name can't be empty.")
-		return
-	end
+local function DoSaveNewBuild(name)
 	local snapshot = BB.Capture.CaptureCurrent()
 	local ok, err = BB.SaveBuild(name, snapshot)
 	if not ok then
@@ -1143,6 +1210,19 @@ function BB.UI.CreateNewBuild(name)
 	end
 	BB.Print("Saved build '" .. name .. "'.")
 	BB.UI.ShowSavedBuild(name)
+end
+
+function BB.UI.CreateNewBuild(name)
+	name = BB.StripFormatting((name or ""):match("^%s*(.-)%s*$"))
+	if name == "" then
+		BB.Print("Build name can't be empty.")
+		return
+	end
+	if BB.GetBuilds()[name] then
+		StaticPopup_Show("ASCENSIONBUILDBUDDY_CONFIRM_NEW_OVERWRITE", name, nil, { name = name })
+		return
+	end
+	DoSaveNewBuild(name)
 end
 
 function BB.UI.SaveOverCurrent()
@@ -1209,6 +1289,18 @@ StaticPopupDialogs["ASCENSIONBUILDBUDDY_NEW_BUILD"] = {
 		self:GetParent():Hide()
 	end,
 	EditBoxOnEscapePressed = function(self) self:GetParent():Hide() end,
+	timeout = 0,
+	whileDead = true,
+	hideOnEscape = true,
+}
+
+StaticPopupDialogs["ASCENSIONBUILDBUDDY_CONFIRM_NEW_OVERWRITE"] = {
+	text = "You already have a build named \"%s\". Overwrite it?",
+	button1 = "Overwrite",
+	button2 = CANCEL,
+	OnAccept = function(self, data)
+		DoSaveNewBuild(data.name)
+	end,
 	timeout = 0,
 	whileDead = true,
 	hideOnEscape = true,
@@ -1342,11 +1434,6 @@ function BB.UI.OpenImportDialog()
 			BB.UI.ImportBuild(name, buildData, "(pasted)")
 		end)
 		AddTooltip(importBtn, "Import", "Import the pasted build.")
-
-		local cancelBtn = CreateActionButton(importDialog, "Cancel", 80)
-		cancelBtn:SetPoint("BOTTOMRIGHT", importDialog, "BOTTOMRIGHT", -14, 14)
-		cancelBtn:SetScript("OnClick", function() importDialog:Hide() end)
-		AddTooltip(cancelBtn, "Cancel", nil)
 	end
 	importDialog.editBox:SetText("")
 	importDialog:Show()
@@ -1354,6 +1441,17 @@ function BB.UI.OpenImportDialog()
 end
 
 local shareChannelDialog
+
+local function GetShareTarget()
+	if UnitExists("target") and UnitIsPlayer("target") then
+		return UnitName("target")
+	end
+	local lastTell = ChatEdit_GetLastTellTarget and ChatEdit_GetLastTellTarget()
+	if lastTell and lastTell ~= "" then
+		return lastTell
+	end
+	return nil
+end
 
 local function BuildShareChannelDialog()
 	local f = CreateBorderedFrame("AscensionBuildBuddyShareChannel", UIParent, 260, 190, "Share Build")
@@ -1365,23 +1463,31 @@ local function BuildShareChannelDialog()
 	info:SetPoint("TOP", f, "TOP", 0, -34)
 	info:SetText("Share to which chat?")
 
-	local raidBtn = CreateActionButton(f, "Raid", 70)
-	raidBtn:SetPoint("TOP", info, "BOTTOM", 0, -16)
-	raidBtn:SetScript("OnClick", function() BB.UI.ShareCurrentBuild("RAID") f:Hide() end)
-	AddTooltip(raidBtn, "Raid", "Share this build to raid chat.")
-
 	local partyBtn = CreateActionButton(f, "Party", 70)
-	partyBtn:SetPoint("RIGHT", raidBtn, "LEFT", -6, 0)
+	partyBtn:SetPoint("TOP", info, "BOTTOM", 0, -16)
 	partyBtn:SetScript("OnClick", function() BB.UI.ShareCurrentBuild("PARTY") f:Hide() end)
 	AddTooltip(partyBtn, "Party", "Share this build to party chat.")
 
 	local guildBtn = CreateActionButton(f, "Guild", 70)
-	guildBtn:SetPoint("LEFT", raidBtn, "RIGHT", 6, 0)
+	guildBtn:SetPoint("LEFT", partyBtn, "RIGHT", 6, 0)
 	guildBtn:SetScript("OnClick", function() BB.UI.ShareCurrentBuild("GUILD") f:Hide() end)
 	AddTooltip(guildBtn, "Guild", "Share this build to guild chat.")
 
+	local whisperBtn = CreateActionButton(f, "Whisper", 70)
+	whisperBtn:SetPoint("RIGHT", partyBtn, "LEFT", -6, 0)
+	whisperBtn:SetScript("OnClick", function()
+		local target = GetShareTarget()
+		if not target then
+			BB.Print("No target selected, and no recent whisper target found.")
+			return
+		end
+		BB.UI.ShareCurrentBuild("WHISPER", target)
+		f:Hide()
+	end)
+	AddTooltip(whisperBtn, "Whisper", "Share this build directly to your current target, or your last whisper target if nothing is targeted.")
+
 	local orText = f:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-	orText:SetPoint("TOP", raidBtn, "BOTTOM", 0, -14)
+	orText:SetPoint("TOP", partyBtn, "BOTTOM", 0, -14)
 	orText:SetText("- or -")
 
 	local stringBtn = CreateActionButton(f, "Copy as String", 160)
@@ -1397,7 +1503,7 @@ local function BuildShareChannelDialog()
 	return f
 end
 
-function BB.UI.ShareCurrentBuild(channel)
+function BB.UI.ShareCurrentBuild(channel, target)
 	if channel == "GUILD" and not IsInGuild() then
 		BB.Print("You're not in a guild.")
 		return
@@ -1406,13 +1512,13 @@ function BB.UI.ShareCurrentBuild(channel)
 		BB.Print("You're not in a party.")
 		return
 	end
-	if channel == "RAID" and not IsInRaid() then
-		BB.Print("You're not in a raid.")
+	if channel == "WHISPER" and not target then
+		BB.Print("No target to share with.")
 		return
 	end
 	local name = viewingLive and "Live Character" or currentBuildName
 	local buildData = GetActiveBuild()
-	BB.BuildChat.PostBuild(channel, name, buildData)
+	BB.BuildChat.PostBuild(channel, name, buildData, target)
 end
 
 function BB.UI.OpenShareChannelDialog()
@@ -1477,6 +1583,9 @@ local function BuildSharePreviewDialog()
 end
 
 BB.BuildChat.onBuildReceived = function(sender, buildName, buildData)
+	if BB.db.denyShares then
+		return
+	end
 	if not sharePreviewDialog then
 		sharePreviewDialog = BuildSharePreviewDialog()
 		sharePreviewDialog:SetFrameStrata("FULLSCREEN_DIALOG")
@@ -1523,6 +1632,10 @@ local function BuildShareToastDialog()
 end
 
 BB.BuildChat.onShareAnnounced = function(sender, shareID, buildName)
+	if BB.db.denyShares then
+		BB.Print(("Declined a shared build from %s (Deny Incoming Shares is on)."):format(sender))
+		return
+	end
 	if not shareToastDialog then
 		shareToastDialog = BuildShareToastDialog()
 		shareToastDialog:SetFrameStrata("FULLSCREEN_DIALOG")
@@ -1541,6 +1654,20 @@ local function BuildMainFrame()
 	nameText:SetPoint("TOP", f, "TOP", 0, -34)
 	f.nameText = nameText
 
+	local denyCheck = CreateFrame("CheckButton", "AscensionBuildBuddyDenySharesCheck", f, "UICheckButtonTemplate")
+	denyCheck:SetWidth(20)
+	denyCheck:SetHeight(20)
+	denyCheck:SetPoint("TOPLEFT", f, "TOPLEFT", 12, -14)
+	denyCheck:SetChecked(BB.db.denyShares)
+	denyCheck:SetScript("OnClick", function(self)
+		BB.db.denyShares = self:GetChecked() and true or false
+	end)
+	AddTooltip(denyCheck, "Deny Incoming Shares", "While this is on, any build shared with you - party/guild broadcasts or direct whispers - is automatically declined without showing a popup. Toggle off to receive share prompts again.")
+
+	local denyLabel = f:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+	denyLabel:SetPoint("LEFT", denyCheck, "RIGHT", 2, 0)
+	denyLabel:SetText("Deny Shares")
+
 	local sidebarArea = CreateFrame("Frame", nil, f)
 	sidebarArea:SetPoint("TOPLEFT", f, "TOPLEFT", 14, -54)
 	sidebarArea:SetPoint("BOTTOMLEFT", f, "BOTTOMLEFT", 14, 12)
@@ -1553,34 +1680,65 @@ local function BuildMainFrame()
 	contentArea:SetPoint("TOPLEFT", f, "TOPLEFT", CONTENT_X, -80)
 	contentArea:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -12, 12)
 
-	local tabNames = { "character", "spells", "cards" }
 	local tabLabels = { character = "Character", spells = "Spells & Talents", cards = "Cards" }
 	local tabWidths = { character = 130, spells = 130, cards = 80 }
-	local contentWidth = 740 - CONTENT_X - 12
-	local tabRowWidth = 0
-	for _, tabName in ipairs(tabNames) do
-		tabRowWidth = tabRowWidth + tabWidths[tabName]
-	end
-	tabRowWidth = tabRowWidth + 6 * (#tabNames - 1)
-	local tabRowStartX = CONTENT_X + (contentWidth - tabRowWidth) / 2
 
-	local prevTab
-	for _, tabName in ipairs(tabNames) do
+	local function MakeTabButton(tabName)
 		local btn = CreateActionButton(f, tabLabels[tabName], tabWidths[tabName])
-		if prevTab then
-			btn:SetPoint("LEFT", prevTab, "RIGHT", 6, 0)
-		else
-			btn:SetPoint("TOPLEFT", f, "TOPLEFT", tabRowStartX, -52)
-		end
 		btn.selectedBorder = CreateSelectionBorder(btn, 3)
 		btn:SetScript("OnClick", function() SetActiveTab(tabName) end)
 		tabButtons[tabName] = btn
-		prevTab = btn
+		return btn
 	end
+
+	local middleBtn = MakeTabButton("spells")
+	middleBtn:SetPoint("TOP", f, "TOP", 0, -52)
+
+	local leftBtn = MakeTabButton("character")
+	leftBtn:SetPoint("RIGHT", middleBtn, "LEFT", -6, 0)
+
+	local rightBtn = MakeTabButton("cards")
+	rightBtn:SetPoint("LEFT", middleBtn, "RIGHT", 6, 0)
 
 	tabFrames.character = BuildCharacterTab(contentArea)
 	tabFrames.spells = BuildSpellsTab(contentArea)
 	tabFrames.cards = BuildCardsTab(contentArea)
+
+	local creditText = f:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+	creditText:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -30, 14)
+	creditText:SetText("Made by Gild")
+
+	local githubBtn = CreateFrame("Button", nil, f)
+	githubBtn:SetWidth(16)
+	githubBtn:SetHeight(16)
+	githubBtn:SetPoint("RIGHT", creditText, "LEFT", -6, 0)
+	local githubTex = githubBtn:CreateTexture(nil, "ARTWORK")
+	githubTex:SetAllPoints(githubBtn)
+	githubTex:SetTexture("Interface\\Icons\\INV_Misc_Note_01")
+	githubBtn:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square", "ADD")
+	githubBtn:SetScript("OnClick", OpenGithubDialog)
+	SetDelayedTooltip(githubBtn, function(self)
+		GameTooltip:SetOwner(self, "ANCHOR_TOP")
+		GameTooltip:SetText("View on GitHub", 1, 1, 1)
+		GameTooltip:AddLine(GITHUB_URL, 0.6, 0.8, 1, true)
+		GameTooltip:Show()
+	end)
+
+	local discordBtn = CreateFrame("Button", nil, f)
+	discordBtn:SetWidth(16)
+	discordBtn:SetHeight(16)
+	discordBtn:SetPoint("RIGHT", githubBtn, "LEFT", -8, 0)
+	local discordTex = discordBtn:CreateTexture(nil, "ARTWORK")
+	discordTex:SetAllPoints(discordBtn)
+	discordTex:SetTexture("Interface\\Common\\VoiceChat-Speaker")
+	discordBtn:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square", "ADD")
+	discordBtn:SetScript("OnClick", OpenDiscordDialog)
+	SetDelayedTooltip(discordBtn, function(self)
+		GameTooltip:SetOwner(self, "ANCHOR_TOP")
+		GameTooltip:SetText("Join the Discord", 1, 1, 1)
+		GameTooltip:AddLine(DISCORD_URL, 0.6, 0.8, 1, true)
+		GameTooltip:Show()
+	end)
 
 	mainFrame = f
 	return f

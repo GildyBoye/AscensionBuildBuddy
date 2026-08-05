@@ -2,7 +2,7 @@ AscensionBuildBuddy = AscensionBuildBuddy or {}
 local BB = AscensionBuildBuddy
 BB.Capture = {}
 
-BB.Capture.LEFT_SLOTS = { "HeadSlot", "NeckSlot", "ShoulderSlot", "BackSlot", "ChestSlot", "WristSlot" }
+BB.Capture.LEFT_SLOTS = { "HeadSlot", "NeckSlot", "ShoulderSlot", "BackSlot", "ChestSlot", "ShirtSlot", "TabardSlot", "WristSlot" }
 BB.Capture.RIGHT_SLOTS = { "HandsSlot", "WaistSlot", "LegsSlot", "FeetSlot", "Finger0Slot", "Finger1Slot", "Trinket0Slot", "Trinket1Slot" }
 BB.Capture.BOTTOM_SLOTS = { "MainHandSlot", "SecondaryHandSlot", "RangedSlot" }
 
@@ -12,6 +12,8 @@ local EMPTY_SLOT_TEXTURE = {
 	ShoulderSlot = "Interface\\PaperDoll\\UI-PaperDoll-Slot-Shoulder",
 	BackSlot = "Interface\\PaperDoll\\UI-PaperDoll-Slot-Chest",
 	ChestSlot = "Interface\\PaperDoll\\UI-PaperDoll-Slot-Chest",
+	ShirtSlot = "Interface\\PaperDoll\\UI-PaperDoll-Slot-Shirt",
+	TabardSlot = "Interface\\PaperDoll\\UI-PaperDoll-Slot-Tabard",
 	WristSlot = "Interface\\PaperDoll\\UI-PaperDoll-Slot-Wrists",
 	HandsSlot = "Interface\\PaperDoll\\UI-PaperDoll-Slot-Hands",
 	WaistSlot = "Interface\\PaperDoll\\UI-PaperDoll-Slot-Waist",
@@ -412,7 +414,14 @@ local function ReadCardSlots(tif, maxGolden, maxNormal)
 	return golden, normal
 end
 
-function BB.Capture.GetSocketedCards()
+local cachedCards, cachedCardsTime
+local CARDS_CACHE_TTL = 60
+
+function BB.Capture.GetSocketedCards(forceRefresh)
+	if not forceRefresh and cachedCards and cachedCardsTime and (GetTime() - cachedCardsTime) < CARDS_CACHE_TTL then
+		return cachedCards
+	end
+
 	local result = { ability = { golden = {}, normal = {} }, talent = { golden = {}, normal = {} } }
 	local frame = SkillCardsFrame
 	local tif = frame and frame.TabInsetFrame
@@ -421,26 +430,33 @@ function BB.Capture.GetSocketedCards()
 	end
 
 	local originalTab = frame.selectedTab
-	local numTabs = frame.numTabs or 5
 	local seenAbility, seenTalent = false, false
 
-	for i = 1, numTabs do
-		if seenAbility and seenTalent then break end
-		local ok = pcall(frame.SetTab, frame, i)
-		if ok then
-			local cardType = tif.cardTypeGolden
-			local okMaxG, maxG = pcall(tif.GetMaxGoldenCards, tif)
-			local okMaxN, maxN = pcall(tif.GetMaxNormalCards, tif)
-			maxG = (okMaxG and type(maxG) == "number") and maxG or 0
-			maxN = (okMaxN and type(maxN) == "number") and maxN or 0
+	local function TryTab(i)
+		if not pcall(frame.SetTab, frame, i) then return end
+		local cardType = tif.cardTypeGolden
+		local okMaxG, maxG = pcall(tif.GetMaxGoldenCards, tif)
+		local okMaxN, maxN = pcall(tif.GetMaxNormalCards, tif)
+		maxG = (okMaxG and type(maxG) == "number") and maxG or 0
+		maxN = (okMaxN and type(maxN) == "number") and maxN or 0
 
-			if cardType == "SKILL_CARD_DEFAULT_GOLDEN" and not seenAbility then
-				result.ability.golden, result.ability.normal = ReadCardSlots(tif, maxG, maxN)
-				seenAbility = true
-			elseif cardType == "SKILL_CARD_TALENT_GOLDEN" and not seenTalent then
-				result.talent.golden, result.talent.normal = ReadCardSlots(tif, maxG, maxN)
-				seenTalent = true
-			end
+		if cardType == "SKILL_CARD_DEFAULT_GOLDEN" and not seenAbility then
+			result.ability.golden, result.ability.normal = ReadCardSlots(tif, maxG, maxN)
+			seenAbility = true
+		elseif cardType == "SKILL_CARD_TALENT_GOLDEN" and not seenTalent then
+			result.talent.golden, result.talent.normal = ReadCardSlots(tif, maxG, maxN)
+			seenTalent = true
+		end
+	end
+
+	TryTab(1)
+	TryTab(4)
+
+	if not (seenAbility and seenTalent) then
+		local numTabs = frame.numTabs or 5
+		for i = 1, numTabs do
+			if seenAbility and seenTalent then break end
+			TryTab(i)
 		end
 	end
 
@@ -448,16 +464,13 @@ function BB.Capture.GetSocketedCards()
 		pcall(frame.SetTab, frame, originalTab)
 	end
 
+	cachedCards = result
+	cachedCardsTime = GetTime()
 	return result
 end
 
-function BB.Capture.CaptureCurrent()
-	local build = {
-		version = 1,
-		playerName = UnitName("player"),
-		level = UnitLevel("player"),
-		created = time(),
-		updated = time(),
+function BB.Capture.CaptureCharacterSnapshot()
+	return {
 		gear = BB.Capture.GetGear("player"),
 		attributes = BB.Capture.GetAttributes("player"),
 		melee = BB.Capture.GetMeleeStats("player"),
@@ -468,23 +481,16 @@ function BB.Capture.CaptureCurrent()
 		primaryStatPathName = BB.Capture.GetPrimaryStatPathName("player"),
 		itemLevel = BB.Capture.GetItemLevel("player"),
 		prestigeLevel = BB.Capture.GetPrestigeLevel("player"),
-		knownSpells = BB.Capture.GetKnownSpells(),
 	}
-	build.class, build.classToken = UnitClass("player")
-	build.race = UnitRace("player")
-	build.realmName = GetRealmName()
-	build.author = (build.playerName or "Unknown") .. "-" .. (build.realmName or "")
-	if C_CharacterAdvancement and C_CharacterAdvancement.GetActiveSpecID then
-		local ok, specId = pcall(C_CharacterAdvancement.GetActiveSpecID)
-		if ok then build.specId = specId end
-	end
+end
 
+function BB.Capture.CaptureTalents()
 	local liveTalents = BB.Capture.GetTalents()
-	build.talents = {}
+	local talents = {}
 	for _, entry in ipairs(liveTalents) do
 		local name, icon = BB.Capture.GetTalentDisplayInfo(entry.entryId, entry.node)
 		local ae, te = BB.Capture.GetTalentCost(entry.entryId, entry.node)
-		table.insert(build.talents, {
+		table.insert(talents, {
 			entryId = entry.entryId,
 			rank = entry.rank,
 			maxRank = BB.Capture.GetTalentMaxRank(entry),
@@ -496,8 +502,32 @@ function BB.Capture.CaptureCurrent()
 			kind = BB.Capture.ClassifyTalentEntry(entry),
 		})
 	end
+	return talents
+end
 
-	build.cards = BB.Capture.GetSocketedCards()
+function BB.Capture.CaptureCurrent()
+	local build = {
+		version = 1,
+		playerName = UnitName("player"),
+		level = UnitLevel("player"),
+		created = time(),
+		updated = time(),
+		knownSpells = BB.Capture.GetKnownSpells(),
+	}
+	for k, v in pairs(BB.Capture.CaptureCharacterSnapshot()) do
+		build[k] = v
+	end
+	build.class, build.classToken = UnitClass("player")
+	build.race = UnitRace("player")
+	build.realmName = GetRealmName()
+	build.author = (build.playerName or "Unknown") .. "-" .. (build.realmName or "")
+	if C_CharacterAdvancement and C_CharacterAdvancement.GetActiveSpecID then
+		local ok, specId = pcall(C_CharacterAdvancement.GetActiveSpecID)
+		if ok then build.specId = specId end
+	end
+
+	build.talents = BB.Capture.CaptureTalents()
+	build.cards = BB.Capture.GetSocketedCards(true)
 
 	return build
 end

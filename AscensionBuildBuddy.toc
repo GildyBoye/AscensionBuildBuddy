@@ -1,8 +1,8 @@
 ## Interface: 30300
 ## Title: Ascension Build Buddy
-## Notes: Mirrors your Character Advancement build - gear, stats, spells and talents - save builds and share them via export string or in-game party/raid/guild share. Made by Gild.
+## Notes: Mirrors your Character Advancement build - gear, stats, spells, talents and skill cards - save builds and share them via export string or in-game party/guild/whisper share. Made by Gild.
 ## Author: Gild
-## Version: 0.2.0
+## Version: 1.1
 ## SavedVariables: AscensionBuildBuddyDB
 
 Libs\LibStub\LibStub.lua

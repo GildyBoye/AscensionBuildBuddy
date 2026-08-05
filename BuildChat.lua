@@ -44,7 +44,7 @@ local function EvictOldShares()
 	end
 end
 
-local function SenderStillEligible(sender, channel)
+local function SenderStillEligible(sender, channel, target)
 	if channel == "GUILD" then
 		if not IsInGuild() then return false end
 		for i = 1, GetNumGuildMembers() do
@@ -55,10 +55,13 @@ local function SenderStillEligible(sender, channel)
 		end
 		return false
 	end
+	if channel == "WHISPER" then
+		return target ~= nil and sender == target
+	end
 	return (UnitInParty(sender) and true) or (UnitInRaid(sender) and true) or false
 end
 
-function Share.PostBuild(channel, buildName, buildData)
+function Share.PostBuild(channel, buildName, buildData, target)
 	if not ChatThrottleLib then
 		BB.Print("ChatThrottleLib isn't loaded -- can't share to chat.")
 		return
@@ -73,12 +76,17 @@ function Share.PostBuild(channel, buildName, buildData)
 	while pendingShares[shareID] do
 		shareID = RandomShareID()
 	end
-	pendingShares[shareID] = { exportString = str, timestamp = time(), channel = channel }
+	pendingShares[shareID] = { exportString = str, timestamp = time(), channel = channel, target = target }
 	shareOrder[#shareOrder + 1] = shareID
 	EvictOldShares()
 
-	ChatThrottleLib:SendAddonMessage("NORMAL", ADDON_PREFIX, "ANN:" .. shareID .. ":" .. buildName, channel)
-	BB.Print(("Shared \"%s\" with your %s -- anyone else with the addon can grab it."):format(buildName, channel:lower()))
+	if channel == "WHISPER" then
+		ChatThrottleLib:SendAddonMessage("NORMAL", ADDON_PREFIX, "ANN:" .. shareID .. ":" .. buildName, "WHISPER", target)
+		BB.Print(("Shared \"%s\" with %s."):format(buildName, target))
+	else
+		ChatThrottleLib:SendAddonMessage("NORMAL", ADDON_PREFIX, "ANN:" .. shareID .. ":" .. buildName, channel)
+		BB.Print(("Shared \"%s\" with your %s -- anyone else with the addon can grab it."):format(buildName, channel:lower()))
+	end
 end
 
 local pendingRequests = {}
@@ -122,7 +130,7 @@ function Share.FulfillRequest(sender, shareID)
 	lastFulfilledFrom[sender] = now
 
 	local share = pendingShares[shareID]
-	if not share or not SenderStillEligible(sender, share.channel) then
+	if not share or not SenderStillEligible(sender, share.channel, share.target) then
 		ChatThrottleLib:SendAddonMessage("NORMAL", ADDON_PREFIX, "ERR:" .. shareID .. ":notfound", "WHISPER", sender)
 		return
 	end
@@ -191,6 +199,9 @@ function Share.ReceiveError(sender, shareID, reason)
 end
 
 function Share.HandleAddonMessage(sender, message)
+	if sender == UnitName("player") then
+		return
+	end
 	local kind = message:match("^(%a+):")
 	if kind == "REQ" then
 		local shareID = message:match("^REQ:(.+)$")

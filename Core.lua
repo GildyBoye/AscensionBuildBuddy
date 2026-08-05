@@ -23,6 +23,7 @@ local function InitializeSavedVariables()
 	local db = AscensionBuildBuddyDB
 	db.version = db.version or 1
 	db.builds = db.builds or {}
+	db.denyShares = db.denyShares or false
 	BB.db = db
 end
 
