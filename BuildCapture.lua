@@ -547,3 +547,4 @@ function BB.Capture.CaptureCurrent()
 
 	return build
 end
+

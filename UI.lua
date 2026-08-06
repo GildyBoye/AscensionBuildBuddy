@@ -6,6 +6,7 @@ local mainFrame
 local tabButtons = {}
 local tabFrames = {}
 local activeTab = "character"
+local SetActiveTab
 
 local TOOLTIP_DELAY = 0.5
 
@@ -1105,6 +1106,186 @@ function BB.UI.RefreshNotesTab()
 	end
 end
 
+local compareTab
+local compareDropdown
+local compareTargetName
+local compareLeftHeaderText, compareRightHeaderText
+local compareLeftScroll, compareLeftScrollChild
+local compareRightScroll, compareRightScrollChild
+local compareLeftLines, compareLeftHeaders = {}, {}
+local compareRightLines, compareRightHeaders = {}, {}
+
+local COMPARE_PANE_W = 250
+local COMPARE_GAP = 16
+
+local function CompareDropdown_OnClick(self)
+	compareTargetName = self.value
+	UIDropDownMenu_SetText(compareDropdown, self:GetText())
+	CloseDropDownMenus()
+	BB.UI.RefreshCompareTab()
+end
+
+local function CompareDropdown_Initialize(self, level)
+	local names = {}
+	for name in pairs(BB.GetBuilds()) do table.insert(names, name) end
+	table.sort(names)
+	for _, name in ipairs(names) do
+		local info = UIDropDownMenu_CreateInfo()
+		info.text = name
+		info.value = name
+		info.func = CompareDropdown_OnClick
+		UIDropDownMenu_AddButton(info, level)
+	end
+end
+
+local function BuildCompareTab(parent)
+	local f = CreateFrame("Frame", nil, parent)
+	f:SetAllPoints(parent)
+	f:Hide()
+
+	compareLeftHeaderText = f:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+	compareLeftHeaderText:SetPoint("TOPLEFT", f, "TOPLEFT", 4, -4)
+	compareLeftHeaderText:SetWidth(COMPARE_PANE_W)
+	compareLeftHeaderText:SetJustifyH("LEFT")
+	compareLeftHeaderText:SetTextColor(0.4, 0.8, 1)
+	compareLeftHeaderText:SetText("Live Character")
+
+	local compareLabel = f:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+	compareLabel:SetPoint("TOPLEFT", f, "TOPLEFT", COMPARE_PANE_W + COMPARE_GAP, -4)
+	compareLabel:SetText("Compare against:")
+
+	compareDropdown = CreateFrame("Frame", "AscensionBuildBuddyCompareDropdown", f, "UIDropDownMenuTemplate")
+	compareDropdown:SetPoint("TOPLEFT", compareLabel, "BOTTOMLEFT", -16, -2)
+	UIDropDownMenu_SetWidth(compareDropdown, COMPARE_PANE_W - 30)
+	UIDropDownMenu_SetText(compareDropdown, "Select a build...")
+	UIDropDownMenu_Initialize(compareDropdown, CompareDropdown_Initialize)
+
+	compareRightHeaderText = f:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+	compareRightHeaderText:SetPoint("TOPLEFT", compareDropdown, "BOTTOMLEFT", 16, -6)
+	compareRightHeaderText:SetWidth(COMPARE_PANE_W)
+	compareRightHeaderText:SetJustifyH("LEFT")
+	compareRightHeaderText:SetTextColor(1, 0.82, 0)
+	compareRightHeaderText:SetText("Pick a build to compare")
+
+	local divider = f:CreateTexture(nil, "ARTWORK")
+	divider:SetWidth(1)
+	divider:SetTexture(1, 1, 1, 0.25)
+	divider:SetPoint("TOP", f, "TOPLEFT", COMPARE_PANE_W + COMPARE_GAP / 2, -4)
+	divider:SetPoint("BOTTOM", f, "BOTTOMLEFT", COMPARE_PANE_W + COMPARE_GAP / 2, SCROLL_BOTTOM_INSET)
+
+	compareLeftScroll = CreateFrame("ScrollFrame", "AscensionBuildBuddyCompareLeftScroll", f, "UIPanelScrollFrameTemplate")
+	compareLeftScroll:SetPoint("TOPLEFT", compareLeftHeaderText, "BOTTOMLEFT", 0, -8)
+	compareLeftScroll:SetPoint("BOTTOMRIGHT", f, "BOTTOMLEFT", COMPARE_PANE_W - SCROLL_RIGHT_INSET, SCROLL_BOTTOM_INSET)
+
+	local leftChild = CreateFrame("Frame", nil, compareLeftScroll)
+	leftChild:SetWidth(COMPARE_PANE_W - SCROLL_RIGHT_INSET)
+	leftChild:SetHeight(1)
+	compareLeftScroll:SetScrollChild(leftChild)
+	compareLeftScrollChild = leftChild
+
+	compareRightScroll = CreateFrame("ScrollFrame", "AscensionBuildBuddyCompareRightScroll", f, "UIPanelScrollFrameTemplate")
+	compareRightScroll:SetPoint("TOPLEFT", compareRightHeaderText, "BOTTOMLEFT", 0, -8)
+	compareRightScroll:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -SCROLL_RIGHT_INSET, SCROLL_BOTTOM_INSET)
+
+	local rightChild = CreateFrame("Frame", nil, compareRightScroll)
+	rightChild:SetWidth(COMPARE_PANE_W - SCROLL_RIGHT_INSET)
+	rightChild:SetHeight(1)
+	compareRightScroll:SetScrollChild(rightChild)
+	compareRightScrollChild = rightChild
+
+	compareTab = f
+	return f
+end
+
+local function RenderStatSheet(scrollChild, linePool, headerPool, build)
+	local function GetLine(idx)
+		local fs = linePool[idx]
+		if not fs then
+			fs = scrollChild:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+			fs:SetJustifyH("LEFT")
+			fs:SetWidth(COMPARE_PANE_W - SCROLL_RIGHT_INSET - 6)
+			linePool[idx] = fs
+		end
+		return fs
+	end
+	local function GetHeader(idx)
+		local fs = headerPool[idx]
+		if not fs then
+			fs = scrollChild:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+			fs:SetJustifyH("LEFT")
+			fs:SetTextColor(1, 0.82, 0)
+			headerPool[idx] = fs
+		end
+		return fs
+	end
+
+	local y = 0
+	local lineIdx, headerIdx = 0, 0
+
+	if not build then
+		for _, fs in pairs(linePool) do fs:Hide() end
+		for _, fs in pairs(headerPool) do fs:Hide() end
+		scrollChild:SetHeight(1)
+		return
+	end
+
+	local ok, sectionData = pcall(BuildSectionData, build)
+	if not ok then
+		lineIdx = lineIdx + 1
+		local fs = GetLine(lineIdx)
+		fs:ClearAllPoints()
+		fs:SetPoint("TOPLEFT", scrollChild, "TOPLEFT", 0, y)
+		fs:SetText("Error: " .. tostring(sectionData))
+		fs:SetTextColor(1, 0.2, 0.2)
+		fs:Show()
+		y = y - 14
+	else
+		for _, key in ipairs(SECTION_ORDER) do
+			headerIdx = headerIdx + 1
+			local h = GetHeader(headerIdx)
+			h:ClearAllPoints()
+			h:SetPoint("TOPLEFT", scrollChild, "TOPLEFT", 0, y)
+			h:SetText(SECTION_LABELS[key])
+			h:Show()
+			y = y - 16
+
+			for _, entry in ipairs(sectionData[key]) do
+				lineIdx = lineIdx + 1
+				local fs = GetLine(lineIdx)
+				fs:ClearAllPoints()
+				fs:SetPoint("TOPLEFT", scrollChild, "TOPLEFT", 6, y)
+				fs:SetText(entry.text or "")
+				fs:SetTextColor(entry.r or 1, entry.g or 1, entry.b or 1)
+				fs:Show()
+				y = y - 13
+			end
+			y = y - 6
+		end
+	end
+
+	for i = lineIdx + 1, #linePool do linePool[i]:Hide() end
+	for i = headerIdx + 1, #headerPool do headerPool[i]:Hide() end
+	scrollChild:SetHeight(math.max(1, -y))
+end
+
+function BB.UI.RefreshCompareTab()
+	if not compareTab then return end
+
+	local liveBuild = BB.Capture.CaptureCurrent()
+	compareLeftHeaderText:SetText("Live Character")
+	RenderStatSheet(compareLeftScrollChild, compareLeftLines, compareLeftHeaders, liveBuild)
+	UpdateScrollBarVisibility(compareLeftScroll)
+
+	local targetBuild = compareTargetName and BB.GetBuilds()[compareTargetName]
+	if targetBuild then
+		compareRightHeaderText:SetText(("%s (by %s)"):format(compareTargetName, targetBuild.author or targetBuild.playerName or "?"))
+	else
+		compareRightHeaderText:SetText("Pick a build to compare")
+	end
+	RenderStatSheet(compareRightScrollChild, compareRightLines, compareRightHeaders, targetBuild)
+	UpdateScrollBarVisibility(compareRightScroll)
+end
+
 local SIDEBAR_W = 170
 local BUILD_ROW_HEIGHT = 20
 
@@ -1170,13 +1351,20 @@ local function BuildBuildsSidebar(parent)
 
 	buildListScrollFrame = CreateFrame("ScrollFrame", "AscensionBuildBuddyBuildListScroll", f, "UIPanelScrollFrameTemplate")
 	buildListScrollFrame:SetPoint("TOPLEFT", liveBtn, "BOTTOMLEFT", 0, -8)
-	buildListScrollFrame:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -22, 0)
+	buildListScrollFrame:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -22, 30)
 
 	local scrollChild = CreateFrame("Frame", nil, buildListScrollFrame)
 	scrollChild:SetWidth(SIDEBAR_W - 26)
 	scrollChild:SetHeight(1)
 	buildListScrollFrame:SetScrollChild(scrollChild)
 	buildListScrollChild = scrollChild
+
+	local compareBtn = CreateActionButton(f, "Compare Builds", SIDEBAR_W - 4)
+	compareBtn:SetPoint("BOTTOMLEFT", f, "BOTTOMLEFT", 0, 0)
+	compareBtn.selectedBorder = CreateSelectionBorder(compareBtn, 3)
+	compareBtn:SetScript("OnClick", function() SetActiveTab("compare") end)
+	tabButtons.compare = compareBtn
+	AddTooltip(compareBtn, "Compare Builds", "View your live character side by side with a saved build.")
 
 	return f
 end
@@ -1238,8 +1426,9 @@ function BB.UI.RefreshBuildList()
 	end
 end
 
-local function SetActiveTab(tabName)
+function SetActiveTab(tabName)
 	activeTab = tabName
+	GameTooltip:Hide()
 	for name, btn in pairs(tabButtons) do
 		if btn.selectedBorder then
 			if name == tabName then btn.selectedBorder:Show() else btn.selectedBorder:Hide() end
@@ -1252,6 +1441,7 @@ local function SetActiveTab(tabName)
 	if tabName == "spells" then BB.UI.RefreshSpellsTab() end
 	if tabName == "cards" then BB.UI.RefreshCardsTab() end
 	if tabName == "notes" then BB.UI.RefreshNotesTab() end
+	if tabName == "compare" then BB.UI.RefreshCompareTab() end
 end
 
 function BB.UI.ShowLiveBuild()
@@ -1806,6 +1996,7 @@ local function BuildMainFrame()
 	tabFrames.spells = BuildSpellsTab(contentArea)
 	tabFrames.cards = BuildCardsTab(contentArea)
 	tabFrames.notes = BuildNotesTab(contentArea)
+	tabFrames.compare = BuildCompareTab(contentArea)
 
 	local creditText = f:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
 	creditText:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -30, 14)
