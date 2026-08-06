@@ -71,7 +71,10 @@ function BB.Capture.GetMeleeStats(unit)
 	if CR_HIT_MELEE then hitRating = GetCombatRatingBonus(CR_HIT_MELEE) end
 	if GetCritChance then critChance = GetCritChance() end
 	if GetArmorPenetration then armorPen = GetArmorPenetration() end
-	if CR_EXPERTISE then expertise = GetCombatRatingBonus(CR_EXPERTISE) end
+	if type(GetExpertise) == "function" then
+		local ok, v = pcall(GetExpertise)
+		if ok and type(v) == "number" then expertise = v end
+	end
 
 	return {
 		minDamage = minDmg,
@@ -168,7 +171,7 @@ end
 
 function BB.Capture.GetDefenseStats(unit)
 	unit = unit or "player"
-	local result = { armor = 0, health = 0, dodge = 0, parry = 0, block = 0, defenseRating = 0 }
+	local result = { armor = 0, health = 0, dodge = 0, parry = 0, block = 0, defenseSkill = 0 }
 
 	local okArmor, base, effective = pcall(UnitArmor, unit)
 	if okArmor then result.armor = effective or 0 end
@@ -183,9 +186,9 @@ function BB.Capture.GetDefenseStats(unit)
 	local okBlock, block = pcall(GetBlockChance)
 	if okBlock then result.block = block or 0 end
 
-	if CR_DEFENSE_SKILL then
-		local ok, v = pcall(GetCombatRatingBonus, CR_DEFENSE_SKILL)
-		if ok then result.defenseRating = v or 0 end
+	if type(UnitDefense) == "function" then
+		local okDef, defBase, defEffective = pcall(UnitDefense, unit)
+		if okDef then result.defenseSkill = defEffective or defBase or 0 end
 	end
 
 	return result
@@ -469,6 +472,83 @@ function BB.Capture.GetSocketedCards(forceRefresh)
 	return result
 end
 
+local scanTooltip = CreateFrame("GameTooltip", "AscensionBuildBuddyScanTooltip", UIParent, "GameTooltipTemplate")
+
+local function GetBuffEffectText(unit, index)
+	scanTooltip:SetOwner(UIParent, "ANCHOR_NONE")
+	scanTooltip:ClearLines()
+	local ok = pcall(scanTooltip.SetUnitAura, scanTooltip, unit, index, "HELPFUL")
+	if not ok then
+		scanTooltip:Hide()
+		return ""
+	end
+	scanTooltip:Show()
+	local lines = {}
+	for i = 2, scanTooltip:NumLines() do
+		local fs = _G["AscensionBuildBuddyScanTooltipTextLeft" .. i]
+		local text = fs and fs:GetText()
+		if text and text ~= "" then
+			table.insert(lines, text)
+		end
+	end
+	scanTooltip:Hide()
+	return table.concat(lines, "\n")
+end
+
+local BUFF_EXCLUDE_PREFIXES = {
+	"keeper's scroll",
+	"pve mode",
+	"pvp mode",
+}
+BB.Capture.BUFF_EXCLUDE_PREFIXES = BUFF_EXCLUDE_PREFIXES
+
+local function IsExcludedBuffName(name)
+	local lower = name:lower()
+	for _, prefix in ipairs(BUFF_EXCLUDE_PREFIXES) do
+		if lower:find(prefix, 1, true) == 1 then
+			return true
+		end
+	end
+	return false
+end
+
+local function GetKnownMountNames()
+	local names = {}
+	if type(GetNumCompanions) == "function" and type(GetCompanionInfo) == "function" then
+		local okNum, num = pcall(GetNumCompanions, "MOUNT")
+		if okNum and num then
+			for i = 1, num do
+				local okInfo, _, _, spellID = pcall(GetCompanionInfo, "MOUNT", i)
+				if okInfo and spellID then
+					local spellName = GetSpellInfo(spellID)
+					if spellName then names[spellName:lower()] = true end
+				end
+			end
+		end
+	end
+	return names
+end
+
+function BB.Capture.GetActiveBuffs(unit)
+	unit = unit or "player"
+	local mounted = (type(IsMounted) == "function") and IsMounted() or false
+	local mountNames = mounted and GetKnownMountNames() or nil
+	local buffs = {}
+	for i = 1, 40 do
+		local ok, name, _, _, count = pcall(UnitAura, unit, i, "HELPFUL")
+		if not ok or not name then break end
+		local excluded = IsExcludedBuffName(name) or (mountNames and mountNames[name:lower()])
+		if not excluded then
+			table.insert(buffs, {
+				name = name,
+				count = (count and count > 1) and count or nil,
+				effect = GetBuffEffectText(unit, i),
+			})
+		end
+	end
+	return buffs
+end
+
 function BB.Capture.CaptureCharacterSnapshot()
 	return {
 		gear = BB.Capture.GetGear("player"),
@@ -544,6 +624,8 @@ function BB.Capture.CaptureCurrent()
 	build.talents = BB.Capture.CaptureTalents()
 	build.cards = BB.Capture.GetSocketedCards(true)
 	build.totalAE, build.totalTE = BB.Capture.GetTotalEssenceSpent()
+	local okBuffs, buffs = pcall(BB.Capture.GetActiveBuffs, "player")
+	build.buffs = okBuffs and buffs or {}
 
 	return build
 end

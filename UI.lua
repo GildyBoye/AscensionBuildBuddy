@@ -227,6 +227,13 @@ local function GetActiveCardsData()
 	return viewedBuild or BB.Capture.CaptureCurrent()
 end
 
+local function GetActiveBuffsData()
+	if viewingLive then
+		return { buffs = BB.Capture.GetActiveBuffs("player") }
+	end
+	return viewedBuild or BB.Capture.CaptureCurrent()
+end
+
 local characterTab
 local playerModel
 local gearButtons = {}
@@ -234,15 +241,15 @@ local statScrollFrame
 local statScrollChild
 local statLines = {}
 local sectionHeaders = {}
-local STAT_LINE_POOL = 60
+local STAT_LINE_POOL = 80
 local LINE_HEIGHT = 15
 local HEADER_HEIGHT = 20
 
-local SECTION_ORDER = { "basic", "melee", "ranged", "spell", "defense" }
+local SECTION_ORDER = { "basic", "melee", "ranged", "spell", "defense", "buffs" }
 local SECTION_LABELS = {
-	basic = "Basic Stats", melee = "Melee", ranged = "Ranged", spell = "Spell", defense = "Defenses",
+	basic = "Basic Stats", melee = "Melee", ranged = "Ranged", spell = "Spell", defense = "Defenses", buffs = "Buffs Active",
 }
-local sectionExpanded = { basic = true, melee = true, ranged = false, spell = false, defense = false }
+local sectionExpanded = { basic = true, melee = true, ranged = false, spell = false, defense = false, buffs = false }
 
 local WEAPON_SLOT_KIND = { MainHandSlot = "melee", SecondaryHandSlot = "melee", RangedSlot = "ranged" }
 local TRYON_SLOT_ID = {
@@ -413,18 +420,36 @@ local function BuildCharacterTab(parent)
 	end
 
 	for i = 1, STAT_LINE_POOL do
-		local fs = scrollChild:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+		local ln = CreateFrame("Button", nil, scrollChild)
+		ln:SetWidth(190)
+		ln:SetHeight(LINE_HEIGHT)
+
+		local fs = ln:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
 		fs:SetJustifyH("LEFT")
-		fs:SetWidth(190)
-		fs:Hide()
-		statLines[i] = fs
+		fs:SetAllPoints(ln)
+		ln.text = fs
+
+		ln:SetScript("OnEnter", function(self)
+			local tip = self.tooltipData
+			if not tip then return end
+			GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+			GameTooltip:SetText(tip.title, 1, 1, 1)
+			if tip.body and tip.body ~= "" then
+				GameTooltip:AddLine(tip.body, 0.9, 0.9, 0.9, true)
+			end
+			GameTooltip:Show()
+		end)
+		ln:SetScript("OnLeave", function() GameTooltip:Hide() end)
+
+		ln:Hide()
+		statLines[i] = ln
 	end
 
 	characterTab = f
 	return f
 end
 
-local function BuildSectionData(build)
+local function BuildSectionData(build, buffsOverride)
 	local attrs = build.attributes or {}
 	local melee = build.melee or {}
 	local ranged = build.ranged or {}
@@ -434,7 +459,7 @@ local function BuildSectionData(build)
 	local ilvl = build.itemLevel
 	local prestige = build.prestigeLevel
 
-	local data = { basic = {}, melee = {}, ranged = {}, spell = {}, defense = {} }
+	local data = { basic = {}, melee = {}, ranged = {}, spell = {}, defense = {}, buffs = {} }
 
 	table.insert(data.basic, { text = "Path of " .. (pathName or "Unknown"), r = 1, g = 0.82, b = 0 })
 	table.insert(data.basic, { text = ("Item Level: %s"):format(ilvl and ("%.2f"):format(ilvl) or "?") })
@@ -453,7 +478,7 @@ local function BuildSectionData(build)
 	end
 	table.insert(data.melee, { text = ("Armor Penetration: %.2f%%"):format(melee.armorPenetration or 0) })
 	table.insert(data.melee, { text = ("Crit Chance: %.2f%%"):format(melee.critChance or 0) })
-	table.insert(data.melee, { text = ("Expertise: %.2f"):format(melee.expertise or 0) })
+	table.insert(data.melee, { text = ("Expertise: %d"):format(melee.expertise or 0) })
 
 	table.insert(data.ranged, { text = ("Damage: %d - %d"):format(ranged.minDamage or 0, ranged.maxDamage or 0) })
 	table.insert(data.ranged, { text = ("Speed: %.2f"):format(ranged.speed or 0) })
@@ -485,7 +510,18 @@ local function BuildSectionData(build)
 	table.insert(data.defense, { text = ("Dodge: %.2f%%"):format(defense.dodge or 0) })
 	table.insert(data.defense, { text = ("Parry: %.2f%%"):format(defense.parry or 0) })
 	table.insert(data.defense, { text = ("Block: %.2f%%"):format(defense.block or 0) })
-	table.insert(data.defense, { text = ("Defense Rating: %.2f%%"):format(defense.defenseRating or 0) })
+	table.insert(data.defense, { text = ("Defense: %d"):format(defense.defenseSkill or 0) })
+
+	local buffs = buffsOverride or build.buffs or {}
+	if #buffs == 0 then
+		table.insert(data.buffs, { text = "No buffs were active." })
+	else
+		for _, buff in ipairs(buffs) do
+			local header = buff.count and ("%s (x%d)"):format(buff.name, buff.count) or buff.name
+			local tooltip = (buff.effect and buff.effect ~= "") and { title = header, body = buff.effect } or nil
+			table.insert(data.buffs, { text = header, tooltip = tooltip })
+		end
+	end
 
 	return data
 end
@@ -493,6 +529,7 @@ end
 function BB.UI.RefreshCharacterTab()
 	if not characterTab then return end
 	local build = GetActiveCharacterData()
+	local buffs = GetActiveBuffsData().buffs or build.buffs or {}
 
 	local gear = build.gear or {}
 	for slotName, btn in pairs(gearButtons) do
@@ -524,9 +561,9 @@ function BB.UI.RefreshCharacterTab()
 		playerModel:SetFacing(modelFacing)
 	end
 
-	local ok, sectionData = pcall(BuildSectionData, build)
+	local ok, sectionData = pcall(BuildSectionData, build, buffs)
 	if not ok then
-		sectionData = { basic = { { text = "Error: " .. tostring(sectionData), r = 1, g = 0.2, b = 0.2 } }, melee = {}, ranged = {}, spell = {}, defense = {} }
+		sectionData = { basic = { { text = "Error: " .. tostring(sectionData), r = 1, g = 0.2, b = 0.2 } }, melee = {}, ranged = {}, spell = {}, defense = {}, buffs = {} }
 	end
 
 	local y = 0
@@ -543,13 +580,14 @@ function BB.UI.RefreshCharacterTab()
 		if sectionExpanded[key] then
 			for _, entry in ipairs(sectionData[key]) do
 				lineIdx = lineIdx + 1
-				local fs = statLines[lineIdx]
-				if fs then
-					fs:ClearAllPoints()
-					fs:SetPoint("TOPLEFT", statScrollChild, "TOPLEFT", 12, y)
-					fs:SetText(entry.text or "")
-					fs:SetTextColor(entry.r or 1, entry.g or 1, entry.b or 1)
-					fs:Show()
+				local ln = statLines[lineIdx]
+				if ln then
+					ln:ClearAllPoints()
+					ln:SetPoint("TOPLEFT", statScrollChild, "TOPLEFT", 12, y)
+					ln.text:SetText(entry.text or "")
+					ln.text:SetTextColor(entry.r or 1, entry.g or 1, entry.b or 1)
+					ln.tooltipData = entry.tooltip
+					ln:Show()
 				end
 				y = y - LINE_HEIGHT
 			end
