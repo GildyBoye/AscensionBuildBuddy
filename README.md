@@ -21,7 +21,7 @@ WoW 3.3.5a addon for the [Ascension](https://ascension.gg) server. Mirrors your 
 3. Hit New to save your current character as a build, or Save to overwrite the selected one
 4. Share / Export to send it to someone, or Import to load someone else's
 
-Saved builds keep their own gear, stats, talents and cards regardless of what you're currently wearing or specced into — pick one from the list to view it, or click Live Character to go back to your current build.
+Saved builds keep their own gear, stats, talents and cards regardless of what you're currently wearing or specced into, pick one from the list to view it, or click Live Character to go back to your current build.
 
 ## Links
 
