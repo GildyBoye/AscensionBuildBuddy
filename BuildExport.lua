@@ -94,6 +94,12 @@ function BB.BuildExport.Import(str)
 		bd.notes = bd.notes:sub(1, MAX_NOTES_LEN)
 	end
 
+	for _, field in ipairs({ "notes", "author", "playerName", "class", "race", "classToken" }) do
+		if type(bd[field]) == "string" then
+			bd[field] = BB.StripFormatting(bd[field])
+		end
+	end
+
 	local name = BB.StripFormatting(package.bn)
 
 	return true, name, bd

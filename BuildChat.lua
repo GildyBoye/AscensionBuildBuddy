@@ -79,6 +79,7 @@ function Share.PostBuild(channel, buildName, buildData, target)
 	pendingShares[shareID] = { exportString = str, timestamp = time(), channel = channel, target = target }
 	shareOrder[#shareOrder + 1] = shareID
 	EvictOldShares()
+	BB.db.stats.sharesSent = (BB.db.stats.sharesSent or 0) + 1
 
 	if channel == "WHISPER" then
 		ChatThrottleLib:SendAddonMessage("NORMAL", ADDON_PREFIX, "ANN:" .. shareID .. ":" .. buildName, "WHISPER", target)

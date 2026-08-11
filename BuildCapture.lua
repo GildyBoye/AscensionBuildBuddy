@@ -6,6 +6,8 @@ BB.Capture.LEFT_SLOTS = { "HeadSlot", "NeckSlot", "ShoulderSlot", "BackSlot", "C
 BB.Capture.RIGHT_SLOTS = { "HandsSlot", "WaistSlot", "LegsSlot", "FeetSlot", "Finger0Slot", "Finger1Slot", "Trinket0Slot", "Trinket1Slot" }
 BB.Capture.BOTTOM_SLOTS = { "MainHandSlot", "SecondaryHandSlot", "RangedSlot" }
 
+local scanTooltip = CreateFrame("GameTooltip", "AscensionBuildBuddyScanTooltip", UIParent, "GameTooltipTemplate")
+
 local EMPTY_SLOT_TEXTURE = {
 	HeadSlot = "Interface\\PaperDoll\\UI-PaperDoll-Slot-Head",
 	NeckSlot = "Interface\\PaperDoll\\UI-PaperDoll-Slot-Neck",
@@ -259,6 +261,29 @@ local function NormalizeIdList(list)
 	return out
 end
 
+local function NormalizeTalentEntries(entries)
+	local result = {}
+	if type(entries) ~= "table" then return result end
+	for _, v in ipairs(entries) do
+		if type(v) == "table" then
+			local entryId = v.entryId or v.ID or v.id
+			if entryId then
+				table.insert(result, { entryId = entryId, node = v })
+			end
+		elseif type(v) == "number" then
+			table.insert(result, { entryId = v })
+		end
+	end
+	if #result == 0 then
+		for k in pairs(entries) do
+			if type(k) == "number" then
+				table.insert(result, { entryId = k })
+			end
+		end
+	end
+	return result
+end
+
 function BB.Capture.GetTalents()
 	if not (C_CharacterAdvancement and C_CharacterAdvancement.GetKnownTalentEntries) then
 		return {}
@@ -270,51 +295,149 @@ function BB.Capture.GetTalents()
 		if specOk then specId = id end
 	end
 
-	local ok, entries = false, nil
-	if specId then
-		ok, entries = pcall(C_CharacterAdvancement.GetKnownTalentEntries, specId)
-	end
-	if not ok or not entries then
-		ok, entries = pcall(C_CharacterAdvancement.GetKnownTalentEntries)
-	end
-	if not ok or not entries then return {} end
-
 	local function RankFor(entryId)
 		if not C_CharacterAdvancement.GetTalentRankByID then return 0 end
 		local rankOk, r = pcall(C_CharacterAdvancement.GetTalentRankByID, entryId)
 		return (rankOk and r) or 0
 	end
 
+	local seen = {}
 	local result = {}
-	for _, v in ipairs(entries) do
-		if type(v) == "table" then
-			local entryId = v.entryId or v.ID or v.id
-			if entryId then
-				table.insert(result, { entryId = entryId, rank = RankFor(entryId), node = v })
+	local function AddAll(entries)
+		for _, entry in ipairs(NormalizeTalentEntries(entries)) do
+			if not seen[entry.entryId] then
+				seen[entry.entryId] = true
+				entry.rank = RankFor(entry.entryId)
+				table.insert(result, entry)
 			end
-		elseif type(v) == "number" then
-			table.insert(result, { entryId = v, rank = RankFor(v) })
 		end
 	end
 
-	if #result == 0 then
-		for k in pairs(entries) do
-			if type(k) == "number" then
-				table.insert(result, { entryId = k, rank = RankFor(k) })
+	local ok1, entries1 = pcall(C_CharacterAdvancement.GetKnownTalentEntries)
+	if ok1 then AddAll(entries1) end
+
+	if specId then
+		local ok2, entries2 = pcall(C_CharacterAdvancement.GetKnownTalentEntries, specId)
+		if ok2 then AddAll(entries2) end
+	end
+
+	local isClassless = BB.Capture.IsClassless()
+	local fallbackEntryIds = {}
+
+	if not isClassless and C_CharacterAdvancement.GetEntryBySpellID and C_CharacterAdvancement.IsKnownID then
+		for _, spellId in ipairs(BB.Capture.GetKnownSpells()) do
+			local okNode, node = pcall(C_CharacterAdvancement.GetEntryBySpellID, spellId)
+			if okNode and type(node) == "table" then
+				local entryId = node.ID
+				local hasCost = (node.AECost and node.AECost > 0) or (node.TECost and node.TECost > 0)
+				if entryId and hasCost and not seen[entryId] then
+					local okKnown, isKnown = pcall(C_CharacterAdvancement.IsKnownID, entryId)
+					if okKnown and isKnown then
+						seen[entryId] = true
+						fallbackEntryIds[entryId] = true
+						table.insert(result, { entryId = entryId, node = node, rank = RankFor(entryId) })
+					end
+				end
 			end
 		end
+	end
+
+	if not isClassless then
+		local spellbookIndex = BB.Capture.BuildSpellbookIndex()
+		local filtered = {}
+		for _, entry in ipairs(result) do
+			local isFallback = fallbackEntryIds[entry.entryId]
+			local spellId = isFallback and BB.Capture.GetTalentSpellId(entry)
+			if not (spellId and BB.Capture.IsPassiveSpellId(spellId, spellbookIndex)) then
+				table.insert(filtered, entry)
+			end
+		end
+		result = filtered
 	end
 
 	return result
 end
 
-function BB.Capture.GetKnownSpells()
-	if not (C_CharacterAdvancement and C_CharacterAdvancement.GetKnownSpells) then
-		return {}
+local UNIVERSAL_SPELLBOOK_TABS = {
+	["general"] = true,
+	["ascension vanity items"] = true,
+}
+
+local SPELLBOOK_EXCLUDE_PREFIXES = {
+	"manastorm",
+}
+
+local function IsExcludedSpellbookName(name)
+	if type(name) ~= "string" then return false end
+	local lower = name:lower()
+	for _, prefix in ipairs(SPELLBOOK_EXCLUDE_PREFIXES) do
+		if lower:find(prefix, 1, true) == 1 then
+			return true
+		end
 	end
-	local ok, spells = pcall(C_CharacterAdvancement.GetKnownSpells)
-	if not ok or not spells then return {} end
-	return NormalizeIdList(spells)
+	return false
+end
+
+function BB.Capture.GetClassSpellbookIds()
+	local ids = {}
+	if type(GetNumSpellTabs) ~= "function" or type(GetSpellBookItemInfo) ~= "function" then
+		return ids
+	end
+	local okTabs, numTabs = pcall(GetNumSpellTabs)
+	if not okTabs or not numTabs then return ids end
+
+	for tab = 1, numTabs do
+		local okTab, tabName, _, offset, numSpells = pcall(GetSpellTabInfo, tab)
+		if okTab and offset and numSpells and not UNIVERSAL_SPELLBOOK_TABS[(tabName or ""):lower()] then
+			local latestByName = {}
+			local nameOrder = {}
+			for i = offset + 1, offset + numSpells do
+				local okItem, spellType, spellId = pcall(GetSpellBookItemInfo, i, BOOKTYPE_SPELL)
+				if okItem and type(spellType) == "string" and spellType:lower() == "spell" and spellId then
+					local okName, slotName = pcall(GetSpellBookItemName, i, BOOKTYPE_SPELL)
+					if not IsExcludedSpellbookName(okName and slotName) then
+						local key = (okName and slotName) or spellId
+						if not latestByName[key] then
+							table.insert(nameOrder, key)
+						end
+						latestByName[key] = spellId
+					end
+				end
+			end
+			for _, key in ipairs(nameOrder) do
+				table.insert(ids, latestByName[key])
+			end
+		end
+	end
+	return ids
+end
+
+function BB.Capture.GetKnownSpells()
+	local ids = {}
+	local seen = {}
+
+	if C_CharacterAdvancement and C_CharacterAdvancement.GetKnownSpells then
+		local ok, spells = pcall(C_CharacterAdvancement.GetKnownSpells)
+		if ok and spells then
+			for _, id in ipairs(NormalizeIdList(spells)) do
+				if not seen[id] then
+					seen[id] = true
+					table.insert(ids, id)
+				end
+			end
+		end
+	end
+
+	if not BB.Capture.IsClassless() then
+		for _, spellId in ipairs(BB.Capture.GetClassSpellbookIds()) do
+			if not seen[spellId] then
+				seen[spellId] = true
+				table.insert(ids, spellId)
+			end
+		end
+	end
+
+	return ids
 end
 
 function BB.Capture.BuildSpellbookIndex()
@@ -330,7 +453,7 @@ function BB.Capture.BuildSpellbookIndex()
 		if okTab and offset and numSpells then
 			for i = offset + 1, offset + numSpells do
 				local okItem, spellType, spellId = pcall(GetSpellBookItemInfo, i, BOOKTYPE_SPELL)
-				if okItem and spellType == "SPELL" and spellId then
+				if okItem and type(spellType) == "string" and spellType:lower() == "spell" and spellId then
 					index[spellId] = i
 				end
 			end
@@ -339,12 +462,72 @@ function BB.Capture.BuildSpellbookIndex()
 	return index
 end
 
+local function StripColorCodes(text)
+	text = text:gsub("|c%x%x%x%x%x%x%x%x", "")
+	text = text:gsub("|r", "")
+	text = text:gsub("|H.-|h", "")
+	text = text:gsub("|h", "")
+	text = text:gsub("|T.-|t", "")
+	return text
+end
+
+local function FragmentIsPassive(fragment)
+	local lower = StripColorCodes(fragment):lower():match("^%s*(.-)%s*$")
+	return lower ~= "" and (lower:sub(1, 7) == "passive" or lower:match("passive%p*$") ~= nil)
+end
+
+local function LineIndicatesPassive(text)
+	if type(text) ~= "string" then return false end
+	for fragment in (text .. "\n"):gmatch("([^\r\n]*)[\r\n]") do
+		if FragmentIsPassive(fragment) then
+			return true
+		end
+	end
+	return false
+end
+
 function BB.Capture.IsPassiveSpellId(spellId, spellbookIndex)
 	local slot = spellbookIndex and spellbookIndex[spellId]
-	if not slot or type(IsPassiveSpell) ~= "function" then return nil end
-	local ok, isPassive = pcall(IsPassiveSpell, slot, BOOKTYPE_SPELL)
-	if ok then return isPassive end
-	return nil
+	if slot then
+		if type(GetSpellBookItemName) == "function" then
+			local okName, _, subName = pcall(GetSpellBookItemName, slot, BOOKTYPE_SPELL)
+			if okName and type(subName) == "string" and subName:lower():find("passive", 1, true) then
+				return true
+			end
+		end
+
+		if type(IsPassiveSpell) == "function" then
+			local ok, isPassive = pcall(IsPassiveSpell, slot, BOOKTYPE_SPELL)
+			if ok then return isPassive end
+		end
+
+		return nil
+	end
+
+	GameTooltip:SetOwner(UIParent, "ANCHOR_NONE")
+	GameTooltip:ClearLines()
+	local okLink = pcall(GameTooltip.SetHyperlink, GameTooltip, "spell:" .. spellId)
+	GameTooltip:Show()
+	if (not okLink or GameTooltip:NumLines() <= 1) and type(GameTooltip.SetSpellByID) == "function" then
+		GameTooltip:ClearLines()
+		pcall(GameTooltip.SetSpellByID, GameTooltip, spellId)
+		GameTooltip:Show()
+	end
+	if GameTooltip:NumLines() == 0 then
+		GameTooltip:Hide()
+		return nil
+	end
+	local isPassive = false
+	for i = 2, GameTooltip:NumLines() do
+		local fs = _G["GameTooltipTextLeft" .. i]
+		local text = fs and fs:GetText()
+		if LineIndicatesPassive(text) then
+			isPassive = true
+			break
+		end
+	end
+	GameTooltip:Hide()
+	return isPassive
 end
 
 function BB.Capture.GetTalentDisplayInfo(entryId, node)
@@ -472,8 +655,6 @@ function BB.Capture.GetSocketedCards(forceRefresh)
 	return result
 end
 
-local scanTooltip = CreateFrame("GameTooltip", "AscensionBuildBuddyScanTooltip", UIParent, "GameTooltipTemplate")
-
 local function GetBuffEffectText(unit, index)
 	scanTooltip:SetOwner(UIParent, "ANCHOR_NONE")
 	scanTooltip:ClearLines()
@@ -550,6 +731,7 @@ function BB.Capture.GetActiveBuffs(unit)
 end
 
 function BB.Capture.CaptureCharacterSnapshot()
+	local class, classToken = UnitClass("player")
 	return {
 		gear = BB.Capture.GetGear("player"),
 		attributes = BB.Capture.GetAttributes("player"),
@@ -561,11 +743,20 @@ function BB.Capture.CaptureCharacterSnapshot()
 		primaryStatPathName = BB.Capture.GetPrimaryStatPathName("player"),
 		itemLevel = BB.Capture.GetItemLevel("player"),
 		prestigeLevel = BB.Capture.GetPrestigeLevel("player"),
+		class = class,
+		classToken = classToken,
 	}
+end
+
+function BB.Capture.IsClassless(unit)
+	unit = unit or "player"
+	local ok, _, classToken = pcall(UnitClass, unit)
+	return not ok or classToken == "HERO"
 end
 
 function BB.Capture.CaptureTalents()
 	local liveTalents = BB.Capture.GetTalents()
+	local isClassless = BB.Capture.IsClassless("player")
 	local talents = {}
 	for _, entry in ipairs(liveTalents) do
 		local name, icon = BB.Capture.GetTalentDisplayInfo(entry.entryId, entry.node)
@@ -579,7 +770,7 @@ function BB.Capture.CaptureTalents()
 			ae = ae,
 			te = te,
 			spellId = BB.Capture.GetTalentSpellId(entry),
-			kind = BB.Capture.ClassifyTalentEntry(entry),
+			kind = isClassless and BB.Capture.ClassifyTalentEntry(entry) or "talent",
 		})
 	end
 	return talents
@@ -612,7 +803,6 @@ function BB.Capture.CaptureCurrent()
 	for k, v in pairs(BB.Capture.CaptureCharacterSnapshot()) do
 		build[k] = v
 	end
-	build.class, build.classToken = UnitClass("player")
 	build.race = UnitRace("player")
 	build.realmName = GetRealmName()
 	build.author = (build.playerName or "Unknown") .. "-" .. (build.realmName or "")

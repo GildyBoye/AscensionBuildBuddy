@@ -215,7 +215,13 @@ end
 local function GetActiveSpellsData()
 	if viewingLive then
 		local totalAE, totalTE = BB.Capture.GetTotalEssenceSpent()
-		return { talents = BB.Capture.CaptureTalents(), knownSpells = BB.Capture.GetKnownSpells(), totalAE = totalAE, totalTE = totalTE }
+		return {
+			talents = BB.Capture.CaptureTalents(),
+			knownSpells = BB.Capture.GetKnownSpells(),
+			totalAE = totalAE,
+			totalTE = totalTE,
+			classToken = select(2, UnitClass("player")),
+		}
 	end
 	return viewedBuild or BB.Capture.CaptureCurrent()
 end
@@ -458,10 +464,15 @@ local function BuildSectionData(build, buffsOverride)
 	local pathName = build.primaryStatPathName
 	local ilvl = build.itemLevel
 	local prestige = build.prestigeLevel
+	local isClassless = (build.classToken or "HERO") == "HERO"
 
 	local data = { basic = {}, melee = {}, ranged = {}, spell = {}, defense = {}, buffs = {} }
 
-	table.insert(data.basic, { text = "Path of " .. (pathName or "Unknown"), r = 1, g = 0.82, b = 0 })
+	if isClassless then
+		table.insert(data.basic, { text = "Path of " .. (pathName or "Unknown"), r = 1, g = 0.82, b = 0 })
+	else
+		table.insert(data.basic, { text = "Class: " .. (build.class or "Unknown"), r = 1, g = 0.82, b = 0 })
+	end
 	table.insert(data.basic, { text = ("Item Level: %s"):format(ilvl and ("%.2f"):format(ilvl) or "?") })
 	table.insert(data.basic, { text = ("Prestige Level: %s"):format(prestige and tostring(prestige) or "?") })
 	table.insert(data.basic, { text = ("Health: %d"):format(defense.health or 0) })
@@ -718,7 +729,7 @@ local function GetOrCreateTalentButton(idx)
 	return btn
 end
 
-local function LayoutTalentGroup(entries, top)
+local function LayoutTalentGroup(entries, top, showCost)
 	for i, entry in ipairs(entries) do
 		local btn = GetOrCreateTalentButton(i)
 		local col = (i - 1) % SPELL_ICONS_PER_ROW
@@ -730,7 +741,7 @@ local function LayoutTalentGroup(entries, top)
 		btn.rankText:SetText(entry.maxRank and ("%d/%d"):format(entry.rank, entry.maxRank) or ("%d/?"):format(entry.rank))
 		btn.tooltipSpellId = entry.spellId
 		btn.tooltipName = entry.name
-		btn.tooltipCost = entry.ae and ("AE %d / TE %d"):format(entry.ae, entry.te or 0) or nil
+		btn.tooltipCost = (showCost and entry.ae) and ("AE %d / TE %d"):format(entry.ae, entry.te or 0) or nil
 		btn:Show()
 	end
 	for i = #entries + 1, #talentButtons do
@@ -744,11 +755,18 @@ function BB.UI.RefreshSpellsTab()
 	if not spellScrollChild then return end
 	local build = GetActiveSpellsData()
 
+	local isClassless = (build.classToken or "HERO") == "HERO"
+
 	local talentsAll = {}
 	for i, entry in ipairs(build.talents or {}) do talentsAll[i] = entry end
 	SortTalentsByCost(talentsAll)
 
-	costSummaryText:SetText(("Ability Essence: %d  |  Talent Essence: %d"):format(build.totalAE or 0, build.totalTE or 0))
+	if isClassless then
+		costSummaryText:SetText(("Ability Essence: %d  |  Talent Essence: %d"):format(build.totalAE or 0, build.totalTE or 0))
+		costSummaryText:Show()
+	else
+		costSummaryText:Hide()
+	end
 
 	local realTalents, abilityEntries = {}, {}
 	for _, entry in ipairs(talentsAll) do
@@ -763,13 +781,20 @@ function BB.UI.RefreshSpellsTab()
 	local rowWidth = SPELL_ICONS_PER_ROW * (SPELL_ICON_SIZE + SPELL_ICON_PAD)
 
 	local talentSpellIds = {}
+	local talentNames = {}
 	for _, entry in ipairs(talentsAll) do
 		if entry.spellId then talentSpellIds[entry.spellId] = entry end
+		if entry.name then talentNames[entry.name:lower()] = true end
 	end
 
 	local spells, spellIdSet = {}, {}
 	for _, id in ipairs(rawSpells) do
-		if not talentSpellIds[id] then
+		local isTalentSpell = talentSpellIds[id]
+		if not isTalentSpell then
+			local spellName = GetSpellInfo(id)
+			isTalentSpell = spellName and talentNames[spellName:lower()]
+		end
+		if not isTalentSpell then
 			spellIdSet[id] = true
 			table.insert(spells, id)
 		end
@@ -790,7 +815,7 @@ function BB.UI.RefreshSpellsTab()
 	talentsLabel:Show()
 	y = y - GROUP_LABEL_HEIGHT
 
-	y = LayoutTalentGroup(realTalents, y)
+	y = LayoutTalentGroup(realTalents, y, isClassless)
 
 	divider:ClearAllPoints()
 	divider:SetPoint("TOPLEFT", spellScrollChild, "TOPLEFT", 0, y - (GROUP_GAP / 2))
@@ -798,26 +823,20 @@ function BB.UI.RefreshSpellsTab()
 	divider:Show()
 	y = y - GROUP_GAP
 
-	local spellbookIndex = BB.Capture.BuildSpellbookIndex()
 	local activeSpells, passiveSpells = {}, {}
-	for _, id in ipairs(spells) do
-		if BB.Capture.IsPassiveSpellId(id, spellbookIndex) then
-			table.insert(passiveSpells, id)
-		else
-			table.insert(activeSpells, id)
+	if isClassless then
+		activeSpells = spells
+	else
+		local spellbookIndex = BB.Capture.BuildSpellbookIndex()
+		for _, id in ipairs(spells) do
+			if BB.Capture.IsPassiveSpellId(id, spellbookIndex) then
+				table.insert(passiveSpells, id)
+			else
+				table.insert(activeSpells, id)
+			end
 		end
 	end
 	local hasPassiveSplit = #passiveSpells > 0
-
-	if #spells > 0 then
-		spellsLabel:ClearAllPoints()
-		spellsLabel:SetPoint("TOPLEFT", spellScrollChild, "TOPLEFT", 0, y)
-		spellsLabel:SetText(hasPassiveSplit and "Active Spells" or "Spells")
-		spellsLabel:Show()
-		y = y - GROUP_LABEL_HEIGHT
-	else
-		spellsLabel:Hide()
-	end
 
 	local btnIdx = 0
 	local function GetOrCreateSpellButton(idx)
@@ -861,25 +880,35 @@ function BB.UI.RefreshSpellsTab()
 		y = top - rows * (SPELL_ICON_SIZE + SPELL_ICON_PAD)
 	end
 
-	LayoutSpellGroup(activeSpells)
-
 	if hasPassiveSplit then
-		divider2:ClearAllPoints()
-		divider2:SetPoint("TOPLEFT", spellScrollChild, "TOPLEFT", 0, y - (GROUP_GAP / 2))
-		divider2:SetWidth(rowWidth)
-		divider2:Show()
-		y = y - GROUP_GAP
-
 		passivesLabel:ClearAllPoints()
 		passivesLabel:SetPoint("TOPLEFT", spellScrollChild, "TOPLEFT", 0, y)
 		passivesLabel:Show()
 		y = y - GROUP_LABEL_HEIGHT
 
 		LayoutSpellGroup(passiveSpells)
+
+		divider2:ClearAllPoints()
+		divider2:SetPoint("TOPLEFT", spellScrollChild, "TOPLEFT", 0, y - (GROUP_GAP / 2))
+		divider2:SetWidth(rowWidth)
+		divider2:Show()
+		y = y - GROUP_GAP
 	else
 		divider2:Hide()
 		passivesLabel:Hide()
 	end
+
+	if #spells > 0 then
+		spellsLabel:ClearAllPoints()
+		spellsLabel:SetPoint("TOPLEFT", spellScrollChild, "TOPLEFT", 0, y)
+		spellsLabel:SetText(hasPassiveSplit and "Active Spells" or "Spells")
+		spellsLabel:Show()
+		y = y - GROUP_LABEL_HEIGHT
+	else
+		spellsLabel:Hide()
+	end
+
+	LayoutSpellGroup(activeSpells)
 
 	for i = btnIdx + 1, #spellButtons do
 		spellButtons[i]:Hide()
@@ -977,9 +1006,9 @@ local function BuildCardsTab(parent)
 	cardsEmptyText:SetWidth(400)
 	cardsEmptyText:SetJustifyH("LEFT")
 	cardsEmptyText:SetText(
-		"Skill Cards data isn't available yet - open the real Skill Cards panel once " ..
-		"this session (it only gets created the first time you open it), then reopen " ..
-		"this tab."
+		"No Skill Cards data found. If your character uses Skill Cards, open the real " ..
+		"Skill Cards panel once this session (it only gets created the first time you " ..
+		"open it), then reopen this tab. Some classes don't use Skill Cards at all."
 	)
 	cardsEmptyText:Hide()
 
@@ -1893,6 +1922,7 @@ local function BuildSharePreviewDialog()
 		local p = pendingSharedBuild
 		pendingSharedBuild = nil
 		f:Hide()
+		BB.db.stats.sharesReceived = (BB.db.stats.sharesReceived or 0) + 1
 		BB.UI.ImportBuild(p.buildName, p.buildData, "(shared by " .. p.sender .. ")")
 	end)
 	AddTooltip(acceptBtn, "Import", "Save this shared build to your own build list.")
@@ -2036,41 +2066,109 @@ local function BuildMainFrame()
 	tabFrames.notes = BuildNotesTab(contentArea)
 	tabFrames.compare = BuildCompareTab(contentArea)
 
+	if not BB.Capture.IsClassless("player") then
+		tabButtons.cards:Disable()
+		AddTooltip(tabButtons.cards, "Cards", "Skill Cards aren't available on this realm.")
+		if activeTab == "cards" then
+			activeTab = "character"
+		end
+	end
+
+	local optionsPanel = CreateFrame("Frame", nil, f)
+	optionsPanel:SetPoint("TOPLEFT", f, "TOPLEFT", 14, -80)
+	optionsPanel:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -12, 12)
+	optionsPanel:Hide()
+
+	local infoY = -4
+	local function AddInfoHeader(text)
+		local fs = optionsPanel:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+		fs:SetJustifyH("LEFT")
+		fs:SetTextColor(1, 0.82, 0)
+		fs:SetText(text)
+		fs:SetPoint("TOPLEFT", optionsPanel, "TOPLEFT", 4, infoY)
+		infoY = infoY - 18
+		return fs
+	end
+	local function AddInfoLine()
+		local fs = optionsPanel:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+		fs:SetJustifyH("LEFT")
+		fs:SetPoint("TOPLEFT", optionsPanel, "TOPLEFT", 10, infoY)
+		infoY = infoY - 15
+		return fs
+	end
+
+	AddInfoHeader("Stats")
+	local optModeLine = AddInfoLine()
+	local optBuildsLine = AddInfoLine()
+	local optSentLine = AddInfoLine()
+	local optReceivedLine = AddInfoLine()
+	local optDenyLine = AddInfoLine()
+
+	infoY = infoY - 10
+	AddInfoHeader("Support")
+	local optVersionLine = AddInfoLine()
+
+	infoY = infoY - 6
+	local discordInfoBtn = CreateActionButton(optionsPanel, "Discord", 100)
+	discordInfoBtn:SetPoint("TOPLEFT", optionsPanel, "TOPLEFT", 10, infoY)
+	discordInfoBtn:SetScript("OnClick", OpenDiscordDialog)
+	AddTooltip(discordInfoBtn, "Discord", "Click to copy the invite link.")
+
+	local githubInfoBtn = CreateActionButton(optionsPanel, "GitHub", 100)
+	githubInfoBtn:SetPoint("LEFT", discordInfoBtn, "RIGHT", 6, 0)
+	githubInfoBtn:SetScript("OnClick", OpenGithubDialog)
+	AddTooltip(githubInfoBtn, "GitHub", "Click to copy the repo link.")
+
+	local function RefreshOptionsPanel()
+		local isClassless = BB.Capture.IsClassless("player")
+		local class = select(1, UnitClass("player"))
+		optModeLine:SetText(isClassless and "Mode: Classless" or ("Mode: COA (%s)"):format(class or "?"))
+		optBuildsLine:SetText(("Total Builds: %d / %d"):format(BB.CountBuilds(), BB.MAX_BUILDS))
+		optSentLine:SetText(("Builds Shared: %d"):format(BB.db.stats.sharesSent or 0))
+		optReceivedLine:SetText(("Builds Received: %d"):format(BB.db.stats.sharesReceived or 0))
+		optDenyLine:SetText("Deny Incoming Shares: " .. (BB.db.denyShares and "On" or "Off"))
+		optVersionLine:SetText("Version: " .. (GetAddOnMetadata(BB.ADDON_NAME, "Version") or "?"))
+	end
+
+	local buildTabBtn = CreateActionButton(f, "Build", 80)
+	local optionsTabBtn = CreateActionButton(f, "Info", 80)
+	optionsTabBtn:SetPoint("TOPRIGHT", f, "BOTTOMRIGHT", -12, 0)
+	buildTabBtn:SetPoint("RIGHT", optionsTabBtn, "LEFT", 6, 0)
+	buildTabBtn.selectedBorder = CreateSelectionBorder(buildTabBtn, 3)
+	optionsTabBtn.selectedBorder = CreateSelectionBorder(optionsTabBtn, 3)
+
+	local function ShowBuildPage()
+		optionsPanel:Hide()
+		nameText:Show()
+		sidebarArea:Show()
+		contentArea:Show()
+		for _, tabName in ipairs(tabOrder) do
+			tabButtons[tabName]:Show()
+		end
+		buildTabBtn.selectedBorder:Show()
+		optionsTabBtn.selectedBorder:Hide()
+	end
+
+	local function ShowOptionsPage()
+		nameText:Hide()
+		sidebarArea:Hide()
+		contentArea:Hide()
+		for _, tabName in ipairs(tabOrder) do
+			tabButtons[tabName]:Hide()
+		end
+		RefreshOptionsPanel()
+		optionsPanel:Show()
+		buildTabBtn.selectedBorder:Hide()
+		optionsTabBtn.selectedBorder:Show()
+	end
+
+	buildTabBtn:SetScript("OnClick", ShowBuildPage)
+	optionsTabBtn:SetScript("OnClick", ShowOptionsPage)
+	buildTabBtn.selectedBorder:Show()
+
 	local creditText = f:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
 	creditText:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -30, 14)
 	creditText:SetText("Made by Gild")
-
-	local githubBtn = CreateFrame("Button", nil, f)
-	githubBtn:SetWidth(16)
-	githubBtn:SetHeight(16)
-	githubBtn:SetPoint("RIGHT", creditText, "LEFT", -6, 0)
-	local githubTex = githubBtn:CreateTexture(nil, "ARTWORK")
-	githubTex:SetAllPoints(githubBtn)
-	githubTex:SetTexture("Interface\\Icons\\INV_Misc_Note_01")
-	githubBtn:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square", "ADD")
-	githubBtn:SetScript("OnClick", OpenGithubDialog)
-	SetDelayedTooltip(githubBtn, function(self)
-		GameTooltip:SetOwner(self, "ANCHOR_TOP")
-		GameTooltip:SetText("View on GitHub", 1, 1, 1)
-		GameTooltip:AddLine(GITHUB_URL, 0.6, 0.8, 1, true)
-		GameTooltip:Show()
-	end)
-
-	local discordBtn = CreateFrame("Button", nil, f)
-	discordBtn:SetWidth(16)
-	discordBtn:SetHeight(16)
-	discordBtn:SetPoint("RIGHT", githubBtn, "LEFT", -8, 0)
-	local discordTex = discordBtn:CreateTexture(nil, "ARTWORK")
-	discordTex:SetAllPoints(discordBtn)
-	discordTex:SetTexture("Interface\\Common\\VoiceChat-Speaker")
-	discordBtn:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square", "ADD")
-	discordBtn:SetScript("OnClick", OpenDiscordDialog)
-	SetDelayedTooltip(discordBtn, function(self)
-		GameTooltip:SetOwner(self, "ANCHOR_TOP")
-		GameTooltip:SetText("Join the Discord", 1, 1, 1)
-		GameTooltip:AddLine(DISCORD_URL, 0.6, 0.8, 1, true)
-		GameTooltip:Show()
-	end)
 
 	mainFrame = f
 	return f
