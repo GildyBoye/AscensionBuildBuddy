@@ -24,6 +24,7 @@ local function InitializeSavedVariables()
 	db.version = db.version or 1
 	db.buildsByRealm = db.buildsByRealm or {}
 	db.denyShares = db.denyShares or false
+	db.style = db.style or "Default"
 	db.stats = db.stats or { sharesSent = 0, sharesReceived = 0 }
 	BB.db = db
 

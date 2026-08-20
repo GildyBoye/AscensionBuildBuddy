@@ -45,19 +45,50 @@ local function AddTooltip(widget, title, subtext)
 	end)
 end
 
+local styledFrames = setmetatable({}, { __mode = "k" })
+
+local BACKDROP_STONE = {
+	bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background",
+	edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
+	tile = true,
+	tileSize = 32,
+	edgeSize = 32,
+	insets = { left = 11, right = 12, top = 12, bottom = 11 },
+}
+local BACKDROP_BLACK = {
+	bgFile = "Interface\\Buttons\\WHITE8x8",
+	edgeFile = "Interface\\Buttons\\WHITE8x8",
+	tile = false,
+	tileSize = 0,
+	edgeSize = 1,
+	insets = { left = 0, right = 0, top = 0, bottom = 0 },
+}
+
+local function ApplyFrameStyle(f)
+	if BB.db.style == "Black" then
+		f:SetBackdrop(BACKDROP_BLACK)
+		f:SetBackdropColor(0.05, 0.05, 0.05, 0.95)
+		f:SetBackdropBorderColor(0.35, 0.35, 0.35, 1)
+	else
+		f:SetBackdrop(BACKDROP_STONE)
+		f:SetBackdropColor(0, 0, 0, 0.85)
+		f:SetBackdropBorderColor(1, 1, 1, 1)
+	end
+end
+
+function BB.UI.SetStyle(styleName)
+	BB.db.style = styleName
+	for f in pairs(styledFrames) do
+		ApplyFrameStyle(f)
+	end
+end
+
 local function CreateBorderedFrame(name, parent, width, height, title)
 	local f = CreateFrame("Frame", name, parent)
 	f:SetWidth(width)
 	f:SetHeight(height)
-	f:SetBackdrop({
-		bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background",
-		edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
-		tile = true,
-		tileSize = 32,
-		edgeSize = 32,
-		insets = { left = 11, right = 12, top = 12, bottom = 11 },
-	})
-	f:SetBackdropColor(0, 0, 0, 0.85)
+	ApplyFrameStyle(f)
+	styledFrames[f] = true
 
 	f:EnableMouse(true)
 	f:SetMovable(true)
@@ -2118,6 +2149,38 @@ local function BuildMainFrame()
 	githubInfoBtn:SetPoint("LEFT", discordInfoBtn, "RIGHT", 6, 0)
 	githubInfoBtn:SetScript("OnClick", OpenGithubDialog)
 	AddTooltip(githubInfoBtn, "GitHub", "Click to copy the repo link.")
+
+	infoY = infoY - 30
+	AddInfoHeader("Display")
+	infoY = infoY - 6
+
+	local styleLabel = optionsPanel:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+	styleLabel:SetJustifyH("LEFT")
+	styleLabel:SetPoint("TOPLEFT", optionsPanel, "TOPLEFT", 10, infoY)
+	styleLabel:SetText("Style:")
+
+	local STYLE_OPTIONS = { "Default", "Black" }
+	local styleDropdown
+	local function StyleDropdown_OnClick(self)
+		UIDropDownMenu_SetText(styleDropdown, self.value)
+		CloseDropDownMenus()
+		BB.UI.SetStyle(self.value)
+	end
+	local function StyleDropdown_Initialize(self, level)
+		for _, styleName in ipairs(STYLE_OPTIONS) do
+			local info = UIDropDownMenu_CreateInfo()
+			info.text = styleName
+			info.value = styleName
+			info.func = StyleDropdown_OnClick
+			UIDropDownMenu_AddButton(info, level)
+		end
+	end
+
+	styleDropdown = CreateFrame("Frame", "AscensionBuildBuddyStyleDropdown", optionsPanel, "UIDropDownMenuTemplate")
+	styleDropdown:SetPoint("TOPLEFT", styleLabel, "BOTTOMLEFT", -16, -2)
+	UIDropDownMenu_SetWidth(styleDropdown, 130)
+	UIDropDownMenu_Initialize(styleDropdown, StyleDropdown_Initialize)
+	UIDropDownMenu_SetText(styleDropdown, BB.db.style or "Default")
 
 	local function RefreshOptionsPanel()
 		local isClassless = BB.Capture.IsClassless("player")
